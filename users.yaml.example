@@ -1,0 +1,22 @@
+# 示例配置文件，用于微博监控和通知推送
+# 使用前，请复制此文件为 users.yaml，并填写正确的配置信息
+
+# 要监控的微博账号列表
+accounts:
+  - weiboid: "1234567890"  # 微博用户ID，可在微博主页URL中找到
+    latest_id: ""          # 最新微博ID，初次使用可留空，程序会自动更新
+  - weiboid: "9876543210"  # 另一个微博用户ID
+    latest_id: ""
+
+# 通知配置
+notification:
+  # Telegram 消息模板，支持格式化字段：{screen_name}, {text}, {region_name}, {source}, {url}
+  telegram_template: |
+    *{screen_name}* 发表了新微博：
+    {text}
+    {region_name} | {source}
+    [查看详情]({url})
+  tgbottoken: "<YOUR_TELEGRAM_BOT_TOKEN>"  # Telegram Bot 的 Token
+  chatid: "<YOUR_CHAT_ID>"                 # Telegram 聊天ID
+  num: "<YOUR_SERVERCHAN_NUM>"             # Server酱推送的 num 参数
+  sendkey: "<YOUR_SERVERCHAN_SENDKEY>"     # Server酱推送的 sendkey 参数
