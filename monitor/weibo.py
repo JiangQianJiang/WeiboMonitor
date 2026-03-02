@@ -3,25 +3,8 @@ from loguru import logger
 
 
 class WeiboMonitor:
-    def __init__(self):
-        # self.session = requests.Session()
-        # 设置移动端请求头
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0',
-            'Cookie': 'SUB=_2AkMfX4f1f8NxqwFRmfEQzm7iaYVxwwrEieKpA3YuJRMxHRl-yT9yqm1YtRB6NN-pGm0-6c-pJ_DzN9rdBxqfpCWqn6v4'
-        }
-        self.session = aiohttp.ClientSession(headers=self.headers)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        await self.close()
-
-    async def close(self):
-        if not self.session.closed:
-            await self.session.close()
-            logger.debug("WeiboMonitor session closed")
+    def __init__(self, session: aiohttp.ClientSession):
+        self.session = session
 
     async def get_latest_weibo(self, uid):
         """ 获取最新微博内容 """

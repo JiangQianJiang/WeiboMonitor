@@ -5,22 +5,22 @@ import asyncio
 
 
 class Notifer:
-    def __init__(self, notification_config: dict):
+    def __init__(self, session: aiohttp.ClientSession, notification_config: dict):
+        self.session = session
         self.notification_config = notification_config
 
     async def ms_send(self, desp: str = '', title: str = "weibo") -> None:
         # server酱推送
-        async with aiohttp.ClientSession() as session:
-            try:
-                response = await session.post(
-                    url=f"https://{self.notification_config['num']}.push.ft07.com/send/{self.notification_config['sendkey']}.send",
-                    json={"title": title, "desp": desp},
-                    headers={"Content-Type": "application/json;charset=utf-8"})
-                response.raise_for_status()
-                logger.info("Server酱推送成功！")
-            except Exception as e:
-                logger.exception(f"Server酱推送失败: {e}")
-                raise
+        try:
+            response = await self.session.post(
+                url=f"https://{self.notification_config['num']}.push.ft07.com/send/{self.notification_config['sendkey']}.send",
+                json={"title": title, "desp": desp},
+                headers={"Content-Type": "application/json;charset=utf-8"})
+            response.raise_for_status()
+            logger.info("Server酱推送成功！")
+        except Exception as e:
+            logger.exception(f"Server酱推送失败: {e}")
+            raise
 
     async def telegram_send(self, message: str) -> None:
         try:
