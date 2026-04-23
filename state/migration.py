@@ -1,5 +1,7 @@
 """Migration script from state.yaml to SQLite database."""
 import asyncio
+import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +29,15 @@ def is_app_running() -> bool:
     return False
 
 
+def _ensure_backup_exists() -> bool:
+    """Ensure state.yaml is backed up before migration. Returns False if backup already exists."""
+    if STATE_YAML_BACKUP.exists():
+        return False
+    if STATE_YAML_PATH.exists():
+        STATE_YAML_PATH.rename(STATE_YAML_BACKUP)
+        return True
+
+
 async def migrate_from_yaml() -> bool:
     """Migrate state from YAML to SQLite database."""
     print("=" * 50)
@@ -49,7 +60,7 @@ async def migrate_from_yaml() -> bool:
     accounts = yaml_data.get("accounts", {})
     if not accounts:
         print("No accounts found in state.yaml, skipping migration")
-        STATE_YAML_PATH.rename(STATE_YAML_BACKUP)
+        _ensure_backup_exists()
         print(f"Empty state.yaml backed up as {STATE_YAML_BACKUP}")
         return True
 
@@ -66,15 +77,71 @@ async def migrate_from_yaml() -> bool:
 
     print(f"\nMigration complete: {migrated_count} accounts migrated")
 
-    if STATE_YAML_BACKUP.exists():
-        print(f"Warning: {STATE_YAML_BACKUP} already exists, not overwriting")
-    else:
-        STATE_YAML_PATH.rename(STATE_YAML_BACKUP)
-        print(f"Original file backed up as {STATE_YAML_BACKUP}")
+    if not _ensure_backup_exists():
+        print(f"Warning: {STATE_YAML_BACKUP} already exists")
+        if STATE_YAML_PATH.exists():
+            # Backup failed, but yaml still exists - rename with timestamp
+            import time
+            ts_backup = STATE_YAML_PATH.with_suffix(f'.yaml.backup.{int(time.time())}')
+            STATE_YAML_PATH.rename(ts_backup)
+            print(f"Migrated yaml renamed to {ts_backup}")
 
     return True
 
 
-if __name__ == "__main__":
-    success = asyncio.run(migrate_from_yaml())
+async def rollback_to_yaml() -> bool:
+    """Rollback from SQLite database to state.yaml."""
+    print("=" * 50)
+    print("WeiboMonitor State Rollback")
+    print("=" * 50)
+
+    if is_app_running():
+        print("ERROR: WeiboMonitor is running. Please stop it before rollback.")
+        return False
+
+    if not STATE_YAML_BACKUP.exists():
+        print(f"ERROR: {STATE_YAML_BACKUP} not found. Cannot rollback.")
+        return False
+
+    repo = StateRepository()
+    await repo.initialize()
+
+    # Export all account states from database
+    async with repo._connect() as db:
+        async with db.execute("SELECT weiboid, latest_id FROM account_state") as cursor:
+            accounts = {row[0]: {"latest_id": row[1]} async for row in cursor}
+
+    yaml_data = {"accounts": accounts}
+
+    # Write to state.yaml
+    with open(STATE_YAML_PATH, "w", encoding="utf-8") as f:
+        yaml.safe_dump(yaml_data, f, allow_unicode=True)
+
+    print(f"Rollback complete: {len(accounts)} accounts restored to state.yaml")
+
+    # Remove backup
+    STATE_YAML_BACKUP.unlink()
+    print(f"Backup file {STATE_YAML_BACKUP} removed")
+
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="WeiboMonitor State Migration Tool")
+    parser.add_argument(
+        "action",
+        choices=["migrate", "rollback"],
+        help="Action to perform: migrate (yaml->sqlite) or rollback (sqlite->yaml)"
+    )
+    args = parser.parse_args()
+
+    if args.action == "migrate":
+        success = asyncio.run(migrate_from_yaml())
+    else:
+        success = asyncio.run(rollback_to_yaml())
+
     sys.exit(0 if success else 1)
+
+
+if __name__ == "__main__":
+    main()

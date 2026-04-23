@@ -7,7 +7,7 @@ from loguru import logger
 from core.config import load_config, LOG_DIR
 from monitor.weibo import WeiboMonitor
 from notifer.notifer import Notifer
-from state.store import async_get_latest_id, async_set_latest_id, async_save_state, get_repository
+from state.store import get_repository
 
 
 class App:
@@ -84,19 +84,22 @@ class App:
 
             info["weiboid"] = weiboid
 
-            if push_results and all(success for success, _ in push_results.values()):
-                await self.repository.save_weibo_history(info)
+            # Check if at least one channel succeeded
+            any_success = any(success for success, _ in push_results.values()) if push_results else False
+
+            # Log all push results regardless of outcome
+            for channel, (success, error) in push_results.items():
+                status = "success" if success else "failed"
+                await self.repository.log_push(weiboid, info["id"], channel, status, error)
+
+            if any_success:
+                # At least one channel succeeded - update state and save history
                 await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
-                for channel, (success, error) in push_results.items():
-                    status = "success" if success else "failed"
-                    await self.repository.log_push(weiboid, info["id"], channel, status, error)
+                await self.repository.save_weibo_history(info)
                 logger.info(f"{info['screen_name']}推送成功，状态已更新")
             else:
-                for channel, (success, error) in push_results.items():
-                    status = "success" if success else "failed"
-                    await self.repository.log_push(weiboid, info["id"], channel, status, error)
-                if push_results:
-                    logger.error(f"{info['screen_name']}推送部分失败，已记录日志")
+                # All channels failed - do not update state
+                logger.error(f"{info['screen_name']}所有渠道均失败，已记录日志")
 
         except Exception:
             logger.exception(f"检查微博更新失败: {weiboid}")

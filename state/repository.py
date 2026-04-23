@@ -1,7 +1,8 @@
 """State repository using SQLite for persistence."""
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 import aiosqlite
 
@@ -16,6 +17,13 @@ class StateRepository:
         self._db_path = DB_PATH
         self._initialized = False
 
+    @asynccontextmanager
+    async def _connect(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Get database connection with foreign keys enabled."""
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON")
+            yield db
+
     async def initialize(self) -> None:
         """Initialize database schema and load cache into memory."""
         await self._ensure_database()
@@ -25,7 +33,7 @@ class StateRepository:
     async def _ensure_database(self) -> None:
         """Create tables and indexes if they don't exist."""
         schema_path = Path(__file__).resolve().parent / "schema.sql"
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             with open(schema_path, "r", encoding="utf-8") as f:
                 schema_sql = f.read()
             await db.executescript(schema_sql)
@@ -33,7 +41,7 @@ class StateRepository:
 
     async def _load_cache(self) -> None:
         """Load all account states from database into memory cache."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             async with db.execute(
                 "SELECT weiboid, latest_id, screen_name FROM account_state"
             ) as cursor:
@@ -61,7 +69,7 @@ class StateRepository:
     ) -> None:
         """Update latest_id in database first, then update memory cache."""
         now = datetime.now().isoformat()
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             await db.execute(
                 """
                 INSERT INTO account_state (weiboid, latest_id, screen_name, updated_at)
@@ -83,7 +91,7 @@ class StateRepository:
 
     async def save_weibo_history(self, weibo_info: Dict) -> None:
         """Save weibo to history table with duplicate prevention."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             await db.execute(
                 """
                 INSERT INTO weibo_history
@@ -112,7 +120,7 @@ class StateRepository:
         error_message: Optional[str] = None,
     ) -> None:
         """Log push result for a specific channel."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             await db.execute(
                 """
                 INSERT INTO push_log (weiboid, weibo_id, channel, status, error_message)
@@ -126,7 +134,7 @@ class StateRepository:
         self, weiboid: str, limit: int = 100
     ) -> List[Dict]:
         """Query weibo history for a specific account."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 """
@@ -142,7 +150,7 @@ class StateRepository:
 
     async def get_push_stats(self, days: int = 7) -> Dict[str, int]:
         """Get push statistics for the last N days."""
-        async with aiosqlite.connect(self._db_path) as db:
+        async with self._connect() as db:
             async with db.execute(
                 """
                 SELECT channel, status, COUNT(*) as count
