@@ -99,17 +99,17 @@ async def rollback_to_yaml() -> bool:
         print("ERROR: WeiboMonitor is running. Please stop it before rollback.")
         return False
 
-    if not STATE_YAML_BACKUP.exists():
-        print(f"ERROR: {STATE_YAML_BACKUP} not found. Cannot rollback.")
-        return False
-
     repo = StateRepository()
     await repo.initialize()
 
-    # Export all account states from database
+    # Export all account states from database directly
     async with repo._connect() as db:
         async with db.execute("SELECT weiboid, latest_id FROM account_state") as cursor:
             accounts = {row[0]: {"latest_id": row[1]} async for row in cursor}
+
+    if not accounts:
+        print("No accounts found in database, nothing to rollback")
+        return True
 
     yaml_data = {"accounts": accounts}
 
@@ -118,10 +118,8 @@ async def rollback_to_yaml() -> bool:
         yaml.safe_dump(yaml_data, f, allow_unicode=True)
 
     print(f"Rollback complete: {len(accounts)} accounts restored to state.yaml")
-
-    # Remove backup
-    STATE_YAML_BACKUP.unlink()
-    print(f"Backup file {STATE_YAML_BACKUP} removed")
+    if STATE_YAML_BACKUP.exists():
+        print(f"Backup file {STATE_YAML_BACKUP} preserved (safety net)")
 
     return True
 

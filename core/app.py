@@ -87,18 +87,21 @@ class App:
             # Check if at least one channel succeeded
             any_success = any(success for success, _ in push_results.values()) if push_results else False
 
-            # Log all push results regardless of outcome
-            for channel, (success, error) in push_results.items():
-                status = "success" if success else "failed"
-                await self.repository.log_push(weiboid, info["id"], channel, status, error)
-
             if any_success:
-                # At least one channel succeeded - update state and save history
+                # At least one channel succeeded - ensure parent record first
                 await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
                 await self.repository.save_weibo_history(info)
+                # Log all push results after parent exists
+                for channel, (success, error) in push_results.items():
+                    status = "success" if success else "failed"
+                    await self.repository.log_push(weiboid, info["id"], channel, status, error)
                 logger.info(f"{info['screen_name']}推送成功，状态已更新")
             else:
-                # All channels failed - do not update state
+                # All channels failed - ensure parent record exists but don't advance state
+                await self.repository.set_latest_id(weiboid, old_id if old_id else "", info.get("screen_name", ""))
+                # Log all as failed
+                for channel, (success, error) in push_results.items():
+                    await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
                 logger.error(f"{info['screen_name']}所有渠道均失败，已记录日志")
 
         except Exception:

@@ -401,3 +401,217 @@ class TestCacheZeroQuery:
         # Cache should be populated from DB
         assert 'startup_user' in new_repo._cache
         assert new_repo._cache['startup_user']['latest_id'] == 'startup_id'
+
+
+class TestMigrationScript:
+    """AC-6: Data migration from state.yaml completes successfully."""
+
+    @pytest.mark.asyncio
+    async def test_migrate_success(self, temp_db, monkeypatch, tmp_path):
+        """Migration script reads all accounts from state.yaml and migrates to SQLite."""
+        import state.migration
+
+        # Create temp state.yaml
+        state_yaml = tmp_path / "state.yaml"
+        state_yaml.write_text("accounts:\n  user1:\n    latest_id: 'id123'\n  user2:\n    latest_id: 'id456'\n", encoding='utf-8')
+
+        # Monkeypatch paths
+        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', state_yaml)
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "state.yaml.backup")
+
+        # Use temp db
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', temp_db)
+        monkeypatch.setattr(state.migration, 'StateRepository', lambda: test_repo)
+
+        result = await state.migration.migrate_from_yaml()
+        assert result is True
+
+        # Verify DB has accounts
+        await test_repo.initialize()
+        assert test_repo.get_latest_id('user1') == 'id123'
+        assert test_repo.get_latest_id('user2') == 'id456'
+
+    @pytest.mark.asyncio
+    async def test_migrate_missing_state_yaml(self, monkeypatch, tmp_path):
+        """Migration skips gracefully when state.yaml doesn't exist."""
+        import state.migration
+        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', tmp_path / "nonexistent.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "backup.yaml")
+
+        result = await state.migration.migrate_from_yaml()
+        assert result is True  # Should succeed (nothing to migrate)
+
+    def test_migrate_rejects_running_app(self, monkeypatch, tmp_path):
+        """Migration refuses to run if app is running (process check)."""
+        import state.migration
+
+        # Mock is_app_running to return True
+        monkeypatch.setattr(state.migration, 'is_app_running', lambda: True)
+
+        result = asyncio.run(state.migration.migrate_from_yaml())
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_rollback_to_yaml(self, temp_db, monkeypatch, tmp_path):
+        """Rollback exports from SQLite to state.yaml."""
+        import state.migration
+
+        # Setup repo with data
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', temp_db)
+        await test_repo.initialize()
+        await test_repo.set_latest_id('rollback_user', 'rollback_id', 'RollUser')
+
+        monkeypatch.setattr(state.migration, 'StateRepository', lambda: test_repo)
+        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', tmp_path / "state.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "backup.yaml")
+
+        result = await state.migration.rollback_to_yaml()
+        assert result is True
+
+        # Verify state.yaml was created
+        assert (tmp_path / "state.yaml").exists()
+        import yaml
+        with open(tmp_path / "state.yaml", "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        assert "rollback_user" in data["accounts"]
+        assert data["accounts"]["rollback_user"]["latest_id"] == "rollback_id"
+
+
+class TestConcurrency:
+    """AC-7: Concurrent operations do not cause 'database is locked' errors."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_set_latest_id(self, repo):
+        """Concurrent set_latest_id operations complete without 'database is locked'."""
+        await repo.initialize()
+
+        # Run multiple concurrent writes
+        tasks = [
+            repo.set_latest_id(f'concurrent_user_{i}', f'concurrent_id_{i}', f'User{i}')
+            for i in range(10)
+        ]
+        await asyncio.gather(*tasks)
+
+        # Verify all were written
+        for i in range(10):
+            assert repo.get_latest_id(f'concurrent_user_{i}') == f'concurrent_id_{i}'
+
+    @pytest.mark.asyncio
+    async def test_concurrent_mixed_operations(self, repo):
+        """Concurrent mixed operations (set_latest_id, save_weibo_history, log_push) complete without errors."""
+        await repo.initialize()
+
+        async def mixed_ops(user_id):
+            await repo.set_latest_id(f'mixed_user_{user_id}', f'mixed_id_{user_id}', f'MixedUser{user_id}')
+            weibo = {
+                'weiboid': f'mixed_user_{user_id}',
+                'id': f'mixed_weibo_{user_id}',
+                'text': f'Test content {user_id}',
+                'screen_name': f'MixedUser{user_id}',
+            }
+            await repo.save_weibo_history(weibo)
+            await repo.log_push(f'mixed_user_{user_id}', f'mixed_weibo_{user_id}', 'telegram', 'success')
+
+        tasks = [mixed_ops(i) for i in range(5)]
+        await asyncio.gather(*tasks)
+
+        # All operations should complete without locking errors
+
+
+class TestAC1Negative:
+    """AC-1 negative tests for schema constraints."""
+
+    @pytest.mark.asyncio
+    async def test_not_null_constraint_on_latest_id(self, repo):
+        """Inserting NULL into latest_id column fails with NOT NULL constraint."""
+        await repo.initialize()
+
+        async with repo._connect() as db:
+            with pytest.raises(aiosqlite.IntegrityError):
+                await db.execute(
+                    "INSERT INTO account_state (weiboid, latest_id) VALUES (?, ?)",
+                    ('null_test_user', None)
+                )
+                await db.commit()
+
+    @pytest.mark.asyncio
+    async def test_not_null_constraint_on_weiboid_in_weibo_history(self, repo):
+        """Inserting NULL weiboid into weibo_history fails with NOT NULL constraint."""
+        await repo.initialize()
+        await repo.set_latest_id('notnull_user', 'id1', 'NotNullUser')
+
+        async with repo._connect() as db:
+            with pytest.raises(aiosqlite.IntegrityError):
+                await db.execute(
+                    """INSERT INTO weibo_history (weiboid, weibo_id, text, screen_name)
+                       VALUES (?, ?, ?, ?)""",
+                    (None, 'weibo123', 'text', 'screen')
+                )
+                await db.commit()
+
+    @pytest.mark.asyncio
+    async def test_index_used_in_query_plan(self, repo):
+        """Verify idx_weibo_history_weiboid index exists and is used in query plan."""
+        await repo.initialize()
+
+        async with repo._connect() as db:
+            # EXPLAIN QUERY PLAN for a query using weiboid
+            async with db.execute(
+                "EXPLAIN QUERY PLAN SELECT * FROM weibo_history WHERE weiboid = ?",
+                ('test_user',)
+            ) as cursor:
+                plan = await cursor.fetchall()
+                plan_str = str(plan)
+                # Index should be used for the query
+                assert 'idx_weibo_history_weiboid' in plan_str or 'INDEX' in plan_str
+
+
+class TestAC8Negative:
+    """AC-8 negative tests for cache behavior."""
+
+    @pytest.mark.asyncio
+    async def test_get_latest_id_does_not_hit_db_twice(self, repo, monkeypatch):
+        """Multiple calls to get_latest_id do not result in multiple DB queries."""
+        await repo.initialize()
+        await repo.set_latest_id('cache_test_user', 'cache_test_id', 'CacheTestUser')
+
+        # Monkeypatch _connect to track calls
+        original_connect = repo._connect
+        call_count = 0
+
+        async def tracking_connect():
+            nonlocal call_count
+            call_count += 1
+            return await original_connect()
+
+        repo._connect = tracking_connect
+
+        # Call get_latest_id multiple times
+        result1 = repo.get_latest_id('cache_test_user')
+        result2 = repo.get_latest_id('cache_test_user')
+        result3 = repo.get_latest_id('cache_test_user')
+
+        assert result1 == 'cache_test_id'
+        assert result2 == 'cache_test_id'
+        assert result3 == 'cache_test_id'
+        # _connect should not have been called (reads from cache only)
+        assert call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_not_auto_refreshed(self, repo, monkeypatch):
+        """Cache is not automatically refreshed from database."""
+        await repo.initialize()
+        await repo.set_latest_id('original_user', 'original_id', 'OriginalUser')
+
+        # Manually update database to simulate external change
+        async with repo._connect() as db:
+            await db.execute(
+                "UPDATE account_state SET latest_id = ? WHERE weiboid = ?",
+                ('external_id', 'original_user')
+            )
+            await db.commit()
+
+        # Cache should still return old value (no auto-refresh)
+        assert repo.get_latest_id('original_user') == 'original_id'
