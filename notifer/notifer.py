@@ -1,4 +1,5 @@
 import re
+from typing import Dict, Optional
 import aiohttp
 from loguru import logger
 import telegram
@@ -53,27 +54,36 @@ class Notifer:
             logger.exception(f"telegram推送失败：{e}")
             raise
 
-    async def send_message(self, message: str, telegram_message: str, title: str) -> None:
+    async def send_message(self, message: str, telegram_message: str, title: str) -> Dict[str, tuple]:
         """
-        根据配置开关推送消息到telegram和/或server酱
-        message: 要发送给Server酱的消息
-        telegram_message: 要发送给Telegram的消息
-        title: Server酱的消息标题
+        Push message to telegram and/or serverchan based on config switches.
+        Returns dict of {channel: (success: bool, error: Optional[str])} for accurate logging.
+
+        message: Server酱 message
+        telegram_message: Telegram message
+        title: Server酱 title
         """
         logger.info(message)
+        results: Dict[str, tuple] = {}
 
-        tasks = []
         if self.notification_config.get('enable_telegram', True):
-            tasks.append(self.telegram_send(telegram_message))
-        else:
-            logger.debug("Telegram 推送已禁用")
+            try:
+                await self.telegram_send(telegram_message)
+                results['telegram'] = (True, None)
+            except Exception as e:
+                results['telegram'] = (False, str(e))
+                logger.error(f"Telegram push failed: {e}")
 
         if self.notification_config.get('enable_serverchan', True):
-            tasks.append(self.ms_send(message, title))
-        else:
-            logger.debug("Server酱 推送已禁用")
+            try:
+                await self.ms_send(message, title)
+                results['serverchan'] = (True, None)
+            except Exception as e:
+                results['serverchan'] = (False, str(e))
+                logger.error(f"Server酱 push failed: {e}")
 
-        if tasks:
-            await asyncio.gather(*tasks)
-        else:
-            logger.warning("所有通知渠道均已禁用，跳过推送")
+        if not results:
+            logger.warning("All notification channels are disabled, skipping push")
+            return results
+
+        return results
