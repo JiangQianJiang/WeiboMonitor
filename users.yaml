@@ -1,0 +1,27 @@
+# 示例配置文件，用于微博监控和通知推送
+# 使用前，请复制此文件为 users.yaml，并填写正确的配置信息
+
+# 微博 Cookie，登录微博后从浏览器开发者工具获取
+cookie: "<YOUR_WEIBO_COOKIE>"
+
+# 要监控的微博账号列表
+accounts:
+  - weiboid: "1234567890"  # 微博用户ID，可在微博主页URL中找到
+  - weiboid: "9876543210"  # 另一个微博用户ID
+
+# 通知配置
+notification:
+  # 通知开关
+  enable_telegram: true   # 是否启用 Telegram 推送
+  enable_serverchan: true # 是否启用 Server酱 推送
+
+  # Telegram 消息模板，支持格式化字段：{screen_name}, {text}, {region_name}, {source}, {url}
+  telegram_template: |
+    *{screen_name}* 发表了新微博：
+    {text}
+    {region_name} | {source}
+    [查看详情]({url})
+  tgbottoken: "<YOUR_TELEGRAM_BOT_TOKEN>"  # Telegram Bot 的 Token
+  chatid: "<YOUR_CHAT_ID>"                 # Telegram 聊天ID
+  num: "<YOUR_SERVERCHAN_NUM>"             # Server酱推送的 num 参数
+  sendkey: "<YOUR_SERVERCHAN_SENDKEY>"     # Server酱推送的 sendkey 参数
