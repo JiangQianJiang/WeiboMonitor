@@ -23,5 +23,4 @@ notification:
     [查看详情]({url})
   tgbottoken: "<YOUR_TELEGRAM_BOT_TOKEN>"  # Telegram Bot 的 Token
   chatid: "<YOUR_CHAT_ID>"                 # Telegram 聊天ID
-  num: "<YOUR_SERVERCHAN_NUM>"             # Server酱推送的 num 参数
-  sendkey: "<YOUR_SERVERCHAN_SENDKEY>"     # Server酱推送的 sendkey 参数
+  sendkey: "<YOUR_SERVERCHAN_SENDKEY>"     # Server酱推送的 sendkey（支持新旧版格式）

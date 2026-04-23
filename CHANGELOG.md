@@ -2,6 +2,14 @@
 
 ## 2026-04-23
 
+### 改进
+
+- **refactor(notifer)**: 优化 Server酱推送逻辑，支持新旧版 sendkey 格式
+  - 自动识别 sendkey 格式（`sctp{num}t...` 或旧版格式）
+  - 新版格式自动从 sendkey 中提取 num 构造 URL
+  - 移除配置文件中的 `num` 字段，简化配置
+  - 兼容官方推荐的推送方式
+
 ### 修复
 
 - **fix(docs)**: 在 users.yaml.example 中补充推送开关字段说明
