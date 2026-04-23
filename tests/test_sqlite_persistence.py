@@ -432,6 +432,11 @@ class TestMigrationScript:
         assert test_repo.get_latest_id('user1') == 'id123'
         assert test_repo.get_latest_id('user2') == 'id456'
 
+        # Verify state.yaml was renamed to state.yaml.backup
+        assert not state_yaml.exists(), "state.yaml should be renamed"
+        backup_path = tmp_path / "state.yaml.backup"
+        assert backup_path.exists(), "state.yaml.backup should exist"
+
     @pytest.mark.asyncio
     async def test_migrate_missing_state_yaml(self, monkeypatch, tmp_path):
         """Migration skips gracefully when state.yaml doesn't exist."""
@@ -467,6 +472,10 @@ class TestMigrationScript:
         monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', tmp_path / "state.yaml")
         monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "backup.yaml")
 
+        # Pre-create backup file to test preservation
+        backup_file = tmp_path / "backup.yaml"
+        backup_file.write_text("original backup content", encoding='utf-8')
+
         result = await state.migration.rollback_to_yaml()
         assert result is True
 
@@ -477,6 +486,9 @@ class TestMigrationScript:
             data = yaml.safe_load(f)
         assert "rollback_user" in data["accounts"]
         assert data["accounts"]["rollback_user"]["latest_id"] == "rollback_id"
+
+        # Verify backup file is preserved after rollback
+        assert (tmp_path / "backup.yaml").exists(), "Backup should be preserved after rollback"
 
 
 class TestConcurrency:
@@ -615,3 +627,171 @@ class TestAC8Negative:
 
         # Cache should still return old value (no auto-refresh)
         assert repo.get_latest_id('original_user') == 'original_id'
+
+
+class TestAppCheckSingle:
+    """Regression tests for App._check_single() write order and state management."""
+
+    @pytest.mark.asyncio
+    async def test_first_account_partial_success(self, temp_db, monkeypatch):
+        """First-seen account with partial push success: parent record created before child records."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        # Setup
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+        app.repository = test_repo
+
+        # Mock monitor to return new weibo for first-seen account
+        app.monitor = MagicMock()
+        app.monitor.get_latest_weibo = AsyncMock(return_value={
+            'id': 'weibo_new',
+            'screen_name': 'NewUser',
+            'text': 'New post',
+            'source': 'Web',
+            'region_name': 'Beijing'
+        })
+
+        # Mock notifer to return partial success
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock(return_value={
+            'telegram': (True, None),
+            'serverchan': (False, 'Connection timeout')
+        })
+
+        # Mock config
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+                'enable_serverchan': True
+            }
+        }
+
+        # Execute
+        await app._check_single({'weiboid': 'first_user'})
+
+        # Assert: account_state should exist
+        assert test_repo.get_latest_id('first_user') == 'weibo_new'
+
+        # Assert: push_log should have 2 entries (one success, one failed)
+        async with test_repo._connect() as db:
+            async with db.execute("SELECT channel, status FROM push_log WHERE weiboid = ?", ('first_user',)) as cursor:
+                logs = [(row[0], row[1]) async for row in cursor]
+        assert len(logs) == 2
+        assert ('telegram', 'success') in logs
+        assert ('serverchan', 'failed') in logs
+
+        # Assert: weibo_history should have 1 entry
+        history = await test_repo.get_weibo_history('first_user')
+        assert len(history) == 1
+        assert history[0]['weibo_id'] == 'weibo_new'
+
+    @pytest.mark.asyncio
+    async def test_first_account_all_fail(self, temp_db, monkeypatch):
+        """First-seen account with all channels failing: parent record created, state not advanced."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+        app.repository = test_repo
+
+        app.monitor = MagicMock()
+        app.monitor.get_latest_weibo = AsyncMock(return_value={
+            'id': 'weibo_fail',
+            'screen_name': 'FailUser',
+            'text': 'Failed post',
+            'source': 'Web',
+            'region_name': 'Shanghai'
+        })
+
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock(return_value={
+            'telegram': (False, 'Token expired'),
+            'serverchan': (False, 'Connection timeout')
+        })
+
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+                'enable_serverchan': True
+            }
+        }
+
+        await app._check_single({'weiboid': 'fail_user'})
+
+        # Assert: account_state should exist with empty latest_id (not advanced)
+        assert test_repo.get_latest_id('fail_user') == ''
+
+        # Assert: push_log should have 2 failed entries
+        async with test_repo._connect() as db:
+            async with db.execute("SELECT channel, status FROM push_log WHERE weiboid = ?", ('fail_user',)) as cursor:
+                logs = [(row[0], row[1]) async for row in cursor]
+        assert len(logs) == 2
+        assert all(status == 'failed' for _, status in logs)
+
+        # Assert: weibo_history should be empty (not saved on failure)
+        history = await test_repo.get_weibo_history('fail_user')
+        assert len(history) == 0
+
+    @pytest.mark.asyncio
+    async def test_existing_account_all_fail(self, temp_db, monkeypatch):
+        """Existing account with all channels failing: state not advanced, no history saved."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+
+        # Pre-populate with existing account and old weibo ID
+        await test_repo.set_latest_id('existing_user', 'old_weibo_id', 'ExistingUser')
+
+        app.repository = test_repo
+
+        app.monitor = MagicMock()
+        app.monitor.get_latest_weibo = AsyncMock(return_value={
+            'id': 'new_weibo_fail',
+            'screen_name': 'ExistingUser',
+            'text': 'New post that will fail',
+            'source': 'iPhone',
+            'region_name': 'Beijing'
+        })
+
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock(return_value={
+            'telegram': (False, 'Bot blocked'),
+            'serverchan': (False, 'Server error')
+        })
+
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+                'enable_serverchan': True
+            }
+        }
+
+        await app._check_single({'weiboid': 'existing_user'})
+
+        # Assert: latest_id should NOT be advanced to new weibo
+        assert test_repo.get_latest_id('existing_user') == 'old_weibo_id'
+
+        # Assert: push_log should have 2 failed entries
+        async with test_repo._connect() as db:
+            async with db.execute("SELECT channel, status FROM push_log WHERE weiboid = ?", ('existing_user',)) as cursor:
+                logs = [(row[0], row[1]) async for row in cursor]
+        assert len(logs) == 2
+        assert all(status == 'failed' for _, status in logs)
+
+        # Assert: weibo_history should be empty
+        history = await test_repo.get_weibo_history('existing_user')
+        assert len(history) == 0
