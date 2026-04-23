@@ -19,8 +19,21 @@ class Notifer:
     async def ms_send(self, desp: str = '', title: str = "weibo") -> None:
         # server酱推送
         try:
+            sendkey = self.notification_config['sendkey']
+            # 判断 sendkey 格式并构造 URL
+            if sendkey.startswith('sctp'):
+                # 新版 sendkey 格式: sctp{num}t...
+                match = re.match(r'sctp(\d+)t', sendkey)
+                if not match:
+                    raise ValueError(f'Invalid sendkey format: {sendkey}')
+                num = match.group(1)
+                url = f"https://{num}.push.ft07.com/send/{sendkey}.send"
+            else:
+                # 旧版 sendkey 格式
+                url = f"https://sctapi.ftqq.com/{sendkey}.send"
+
             response = await self.session.post(
-                url=f"https://{self.notification_config['num']}.push.ft07.com/send/{self.notification_config['sendkey']}.send",
+                url=url,
                 json={"title": title, "desp": desp},
                 headers={"Content-Type": "application/json;charset=utf-8"})
             response.raise_for_status()

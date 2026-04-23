@@ -2,7 +2,20 @@
 
 ## 2026-04-23
 
+### 改进
+
+- **refactor(notifer)**: 优化 Server酱推送逻辑，支持新旧版 sendkey 格式
+  - 自动识别 sendkey 格式（`sctp{num}t...` 或旧版格式）
+  - 新版格式自动从 sendkey 中提取 num 构造 URL
+  - 移除配置文件中的 `num` 字段，简化配置
+  - 兼容官方推荐的推送方式
+
 ### 修复
+
+- **fix(docs)**: 在 users.yaml.example 中补充推送开关字段说明
+  - 添加 `enable_telegram` 和 `enable_serverchan` 字段到示例配置
+  - 说明默认值为 `true`，保持向后兼容
+  - 修复开关配置缺失导致无法生效的问题
 
 - **fix(docs)**: 修复 README 中的运行命令
   - 将 `python core/main.py` 改为 `python -m core.main`
