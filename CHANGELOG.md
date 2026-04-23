@@ -4,6 +4,11 @@
 
 ### 修复
 
+- **fix(docs)**: 在 users.yaml.example 中补充推送开关字段说明
+  - 添加 `enable_telegram` 和 `enable_serverchan` 字段到示例配置
+  - 说明默认值为 `true`，保持向后兼容
+  - 修复开关配置缺失导致无法生效的问题
+
 - **fix(docs)**: 修复 README 中的运行命令
   - 将 `python core/main.py` 改为 `python -m core.main`
   - 解决直接运行时的 `ModuleNotFoundError: No module named 'core'` 错误
