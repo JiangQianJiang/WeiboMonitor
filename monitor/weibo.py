@@ -9,8 +9,9 @@ class WeiboMonitor:
     async def get_latest_weibo(self, uid):
         """ 获取最新微博内容 """
         api_url = f'https://www.weibo.com/ajax/statuses/mymblog?uid={uid}&page=1&feature=0'
+        headers = {'Referer': 'https://weibo.com/'}
         try:
-            async with self.session.get(api_url, timeout=5) as response:
+            async with self.session.get(api_url, headers=headers, timeout=5) as response:
                 response.raise_for_status()
                 data = await response.json()
 
