@@ -63,9 +63,6 @@ class App:
                 logger.debug(f"{info['screen_name']}无新微博更新")
                 return
 
-            set_latest_id(self.state, weiboid, info["id"])
-            save_state(self.state)
-
             message = (
                 f"【{info['screen_name']}】发表微博：\n\n"
                 f"{info['text']}\n\n"
@@ -79,8 +76,12 @@ class App:
                 source=info["source"],
                 url=f"https://weibo.com/{weiboid}/{info['id']}",
             )
-            logger.info(f"{info['screen_name']}检测到新微博，已推送")
+            logger.info(f"{info['screen_name']}检测到新微博，准备推送")
             await self.notifer.send_message(message, telegram_message, f"{info['screen_name']}发微博啦")
+
+            set_latest_id(self.state, weiboid, info["id"])
+            save_state(self.state)
+            logger.info(f"{info['screen_name']}推送成功，状态已更新")
         except Exception:
             logger.exception(f"检查微博更新失败: {weiboid}")
 

@@ -1,7 +1,14 @@
+import re
 import aiohttp
 from loguru import logger
 import telegram
 import asyncio
+
+
+def escape_markdown_v2(text: str) -> str:
+    """转义 Telegram MarkdownV2 特殊字符"""
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
 
 class Notifer:
@@ -25,7 +32,8 @@ class Notifer:
     async def telegram_send(self, message: str) -> None:
         try:
             bot = telegram.Bot(self.notification_config['tgbottoken'])
-            await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
+            escaped_message = escape_markdown_v2(message)
+            await bot.send_message(text=escaped_message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
                                    disable_web_page_preview=True)
             logger.info("telegram推送成功！")
         except Exception as e:
