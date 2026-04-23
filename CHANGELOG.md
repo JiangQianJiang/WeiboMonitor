@@ -2,6 +2,14 @@
 
 ## 2026-04-23
 
+### 新增
+
+- **feat(notifer)**: 添加 Telegram 和 Server酱通知开关
+  - 在 `users.yaml` 中新增 `enable_telegram` 和 `enable_serverchan` 配置项
+  - 修改 `Notifer.send_message()` 方法，根据开关决定是否推送
+  - 默认两个开关均为 `true`，保持向后兼容
+  - 当所有渠道禁用时记录警告日志
+
 ### 修复
 
 - **fix(core)**: 修复阿里云函数入口导入错误
