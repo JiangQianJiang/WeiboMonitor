@@ -2,6 +2,13 @@
 
 ## 2026-04-23
 
+### 修复
+
+- **fix(docs)**: 修复 README 中的运行命令
+  - 将 `python core/main.py` 改为 `python -m core.main`
+  - 解决直接运行时的 `ModuleNotFoundError: No module named 'core'` 错误
+  - 使用 `-m` 参数确保 Python 正确解析模块路径
+
 ### 新增
 
 - **feat(notifer)**: 添加 Telegram 和 Server酱通知开关

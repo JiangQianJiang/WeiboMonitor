@@ -53,24 +53,7 @@ pip install -r requirements.txt
 cp users.yaml.example users.yaml
 ```
 
-关键字段说明：
 
-```yaml
-cookie: "<YOUR_WEIBO_COOKIE>"       # 微博 Cookie，从浏览器开发者工具获取
-
-accounts:
-  - weiboid: "1234567890"           # 微博用户ID
-
-notification:
-  telegram_template: |              # Telegram 消息模板
-    *{screen_name}* 发表了新微博：
-    {text}
-    {region_name} | {source}
-    [查看详情]({url})
-  tgbottoken: "<BOT_TOKEN>"        # Telegram Bot Token
-  chatid: "<CHAT_ID>"              # Telegram 聊天ID
-  num: "<SERVERCHAN_NUM>"          # Server酱 num
-  sendkey: "<SERVERCHAN_SENDKEY>"  # Server酱 sendkey
 ```
 
 ## 运行
@@ -78,7 +61,7 @@ notification:
 本地运行：
 
 ```bash
-python core/main.py
+python -m core.main
 ```
 
 阿里云函数计算入口：`core/index.handler`
