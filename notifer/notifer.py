@@ -1,7 +1,14 @@
+import re
 import aiohttp
 from loguru import logger
 import telegram
 import asyncio
+
+
+def escape_markdown_v2(text: str) -> str:
+    """转义 Telegram MarkdownV2 特殊字符"""
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
 
 class Notifer:
@@ -25,7 +32,8 @@ class Notifer:
     async def telegram_send(self, message: str) -> None:
         try:
             bot = telegram.Bot(self.notification_config['tgbottoken'])
-            await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
+            escaped_message = escape_markdown_v2(message)
+            await bot.send_message(text=escaped_message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
                                    disable_web_page_preview=True)
             logger.info("telegram推送成功！")
         except Exception as e:
@@ -34,14 +42,25 @@ class Notifer:
 
     async def send_message(self, message: str, telegram_message: str, title: str) -> None:
         """
-        同时使用telegram和server酱推送消息
+        根据配置开关推送消息到telegram和/或server酱
         message: 要发送给Server酱的消息
         telegram_message: 要发送给Telegram的消息
         title: Server酱的消息标题
-        notification_config: 通知配置字典
         """
         logger.info(message)
-        await asyncio.gather(
-            self.telegram_send(telegram_message),
-            self.ms_send(message, title)
-        )
+
+        tasks = []
+        if self.notification_config.get('enable_telegram', True):
+            tasks.append(self.telegram_send(telegram_message))
+        else:
+            logger.debug("Telegram 推送已禁用")
+
+        if self.notification_config.get('enable_serverchan', True):
+            tasks.append(self.ms_send(message, title))
+        else:
+            logger.debug("Server酱 推送已禁用")
+
+        if tasks:
+            await asyncio.gather(*tasks)
+        else:
+            logger.warning("所有通知渠道均已禁用，跳过推送")

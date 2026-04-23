@@ -1,11 +1,12 @@
-from main import run
+import asyncio
+from core.app import App
 
 
 # Aliyun FC
 def handler(event, context):
-    run()
+    asyncio.run(App().run_once())
     return
 
 
 if __name__ == '__main__':
-    run()
+    asyncio.run(App().run_once())

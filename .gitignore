@@ -4,3 +4,16 @@ tasks/
 docs/
 discuss/
 .claude/
+users.yaml
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.humanize/
+codex-loguru-check/
