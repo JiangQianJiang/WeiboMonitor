@@ -6,7 +6,7 @@ from loguru import logger
 
 from core.config import load_config, LOG_DIR
 from monitor.weibo import WeiboMonitor
-from notifer.notifer import Notifer
+from notifer.notifer import Notifer, escape_markdown_v2
 from state.store import get_repository
 
 
@@ -70,7 +70,6 @@ class App:
                 f"https://weibo.com/{weiboid}/{info['id']}\n\n"
             )
             # Escape user data fields BEFORE template substitution to preserve template markup
-            from notifer.notifer import escape_markdown_v2
             telegram_message = self.config["notification"]["telegram_template"].format(
                 screen_name=escape_markdown_v2(info["screen_name"]),
                 text=escape_markdown_v2(info["text"]),

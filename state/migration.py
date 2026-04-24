@@ -1,7 +1,6 @@
 """Migration script from state.yaml to SQLite database."""
 import asyncio
 import argparse
-import os
 import sys
 from pathlib import Path
 
@@ -36,6 +35,7 @@ def _ensure_backup_exists() -> bool:
     if STATE_YAML_PATH.exists():
         STATE_YAML_PATH.rename(STATE_YAML_BACKUP)
         return True
+    return False
 
 
 async def migrate_from_yaml() -> bool:
