@@ -22,7 +22,7 @@ def is_app_running() -> bool:
         try:
             if proc.info['name'] and 'python' in proc.info['name'].lower():
                 cmdline = ' '.join(proc.info['cmdline'] or [])
-                if 'main.py' in cmdline or 'core/main' in cmdline:
+                if 'main.py' in cmdline or 'core/main' in cmdline or 'core.main' in cmdline:
                     return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue

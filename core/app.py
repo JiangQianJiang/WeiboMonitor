@@ -69,12 +69,14 @@ class App:
                 f"{info['region_name']} | {info['source']}\n\n"
                 f"https://weibo.com/{weiboid}/{info['id']}\n\n"
             )
+            # Escape user data fields BEFORE template substitution to preserve template markup
+            from notifer.notifer import escape_markdown_v2
             telegram_message = self.config["notification"]["telegram_template"].format(
-                screen_name=info["screen_name"],
-                text=info["text"],
-                region_name=info["region_name"],
-                source=info["source"],
-                url=f"https://weibo.com/{weiboid}/{info['id']}",
+                screen_name=escape_markdown_v2(info["screen_name"]),
+                text=escape_markdown_v2(info["text"]),
+                region_name=escape_markdown_v2(info["region_name"]),
+                source=escape_markdown_v2(info["source"]),
+                url=escape_markdown_v2(f"https://weibo.com/{weiboid}/{info['id']}"),
             )
             logger.info(f"{info['screen_name']}检测到新微博，准备推送")
 
