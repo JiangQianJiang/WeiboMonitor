@@ -16,4 +16,5 @@ __pycache__/
 dist/
 build/
 .humanize/
+*.db
 codex-loguru-check/

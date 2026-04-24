@@ -1,4 +1,5 @@
 import re
+from typing import Dict, Optional, Tuple
 import aiohttp
 from loguru import logger
 import telegram
@@ -45,35 +46,42 @@ class Notifer:
     async def telegram_send(self, message: str) -> None:
         try:
             bot = telegram.Bot(self.notification_config['tgbottoken'])
-            escaped_message = escape_markdown_v2(message)
-            await bot.send_message(text=escaped_message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
+            await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
                                    disable_web_page_preview=True)
             logger.info("telegram推送成功！")
         except Exception as e:
             logger.exception(f"telegram推送失败：{e}")
             raise
 
-    async def send_message(self, message: str, telegram_message: str, title: str) -> None:
+    async def send_message(self, message: str, telegram_message: str, title: str) -> Dict[str, Tuple[bool, Optional[str]]]:
         """
-        根据配置开关推送消息到telegram和/或server酱
-        message: 要发送给Server酱的消息
-        telegram_message: 要发送给Telegram的消息
-        title: Server酱的消息标题
+        Push message to telegram and/or serverchan based on config switches.
+        Returns dict of {channel: (success: bool, error: Optional[str])} for accurate logging.
+
+        message: Server酱 message
+        telegram_message: Telegram message
+        title: Server酱 title
         """
         logger.info(message)
 
-        tasks = []
+        channels: Dict[str, "coroutine"] = {}
         if self.notification_config.get('enable_telegram', True):
-            tasks.append(self.telegram_send(telegram_message))
-        else:
-            logger.debug("Telegram 推送已禁用")
-
+            channels['telegram'] = self.telegram_send(telegram_message)
         if self.notification_config.get('enable_serverchan', True):
-            tasks.append(self.ms_send(message, title))
-        else:
-            logger.debug("Server酱 推送已禁用")
+            channels['serverchan'] = self.ms_send(message, title)
 
-        if tasks:
-            await asyncio.gather(*tasks)
-        else:
-            logger.warning("所有通知渠道均已禁用，跳过推送")
+        if not channels:
+            logger.warning("All notification channels are disabled, skipping push")
+            return {}
+
+        results_list = await asyncio.gather(*channels.values(), return_exceptions=True)
+
+        results: Dict[str, Tuple[bool, Optional[str]]] = {}
+        for (channel, _), result in zip(channels.items(), results_list):
+            if isinstance(result, Exception):
+                logger.error(f"{channel} push failed: {result}")
+                results[channel] = (False, str(result))
+            else:
+                results[channel] = (True, None)
+
+        return results

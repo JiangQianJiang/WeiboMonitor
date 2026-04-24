@@ -6,15 +6,15 @@ from loguru import logger
 
 from core.config import load_config, LOG_DIR
 from monitor.weibo import WeiboMonitor
-from notifer.notifer import Notifer
-from state.store import load_state, save_state, get_latest_id, set_latest_id
+from notifer.notifer import Notifer, escape_markdown_v2
+from state.store import get_repository
 
 
 class App:
     def __init__(self):
         self.scheduler = AsyncIOScheduler(timezone="Asia/Shanghai")
         self.config: dict = {}
-        self.state: dict = {}
+        self.repository = None
         self.session: aiohttp.ClientSession | None = None
         self.monitor: WeiboMonitor | None = None
         self.notifer: Notifer | None = None
@@ -26,7 +26,7 @@ class App:
             compression="zip", level="INFO",
         )
         self.config = load_config()
-        self.state = load_state()
+        self.repository = await get_repository()
         self.session = aiohttp.ClientSession(headers={
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0',
             'Cookie': self.config.get("cookie", ""),
@@ -58,7 +58,7 @@ class App:
                 logger.warning(f"{weiboid}未获取到微博内容")
                 return
 
-            old_id = get_latest_id(self.state, weiboid)
+            old_id = self.repository.get_latest_id(weiboid)
             if old_id == info["id"]:
                 logger.debug(f"{info['screen_name']}无新微博更新")
                 return
@@ -69,19 +69,42 @@ class App:
                 f"{info['region_name']} | {info['source']}\n\n"
                 f"https://weibo.com/{weiboid}/{info['id']}\n\n"
             )
+            # Escape user data fields BEFORE template substitution to preserve template markup
             telegram_message = self.config["notification"]["telegram_template"].format(
-                screen_name=info["screen_name"],
-                text=info["text"],
-                region_name=info["region_name"],
-                source=info["source"],
-                url=f"https://weibo.com/{weiboid}/{info['id']}",
+                screen_name=escape_markdown_v2(info["screen_name"]),
+                text=escape_markdown_v2(info["text"]),
+                region_name=escape_markdown_v2(info["region_name"]),
+                source=escape_markdown_v2(info["source"]),
+                url=escape_markdown_v2(f"https://weibo.com/{weiboid}/{info['id']}"),
             )
             logger.info(f"{info['screen_name']}检测到新微博，准备推送")
-            await self.notifer.send_message(message, telegram_message, f"{info['screen_name']}发微博啦")
 
-            set_latest_id(self.state, weiboid, info["id"])
-            save_state(self.state)
-            logger.info(f"{info['screen_name']}推送成功，状态已更新")
+            push_results = await self.notifer.send_message(
+                message, telegram_message, f"{info['screen_name']}发微博啦"
+            )
+
+            info["weiboid"] = weiboid
+
+            # Check if at least one channel succeeded
+            any_success = any(success for success, _ in push_results.values()) if push_results else False
+
+            if any_success:
+                # At least one channel succeeded - ensure parent record first
+                await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
+                await self.repository.save_weibo_history(info)
+                # Log all push results after parent exists
+                for channel, (success, error) in push_results.items():
+                    status = "success" if success else "failed"
+                    await self.repository.log_push(weiboid, info["id"], channel, status, error)
+                logger.info(f"{info['screen_name']}推送成功，状态已更新")
+            else:
+                # All channels failed - ensure parent record exists but don't advance state
+                await self.repository.set_latest_id(weiboid, old_id if old_id else "", info.get("screen_name", ""))
+                # Log all as failed
+                for channel, (success, error) in push_results.items():
+                    await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
+                logger.error(f"{info['screen_name']}所有渠道均失败，已记录日志")
+
         except Exception:
             logger.exception(f"检查微博更新失败: {weiboid}")
 
