@@ -28,6 +28,13 @@ def repo(temp_db, monkeypatch):
     return test_repo
 
 
+@pytest.fixture
+def writable_temp_dir():
+    """Create a writable temporary directory for migration tests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
 class TestSchemaValidation:
     """AC-1: Database schema correctly implements the three-table design."""
 
@@ -407,17 +414,17 @@ class TestMigrationScript:
     """AC-6: Data migration from state.yaml completes successfully."""
 
     @pytest.mark.asyncio
-    async def test_migrate_success(self, temp_db, monkeypatch, tmp_path):
+    async def test_migrate_success(self, temp_db, monkeypatch, writable_temp_dir):
         """Migration script reads all accounts from state.yaml and migrates to SQLite."""
         import state.migration
 
         # Create temp state.yaml
-        state_yaml = tmp_path / "state.yaml"
+        state_yaml = writable_temp_dir / "state.yaml"
         state_yaml.write_text("accounts:\n  user1:\n    latest_id: 'id123'\n  user2:\n    latest_id: 'id456'\n", encoding='utf-8')
 
         # Monkeypatch paths
         monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', state_yaml)
-        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "state.yaml.backup")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', writable_temp_dir / "state.yaml.backup")
 
         # Use temp db
         test_repo = StateRepository()
@@ -434,20 +441,20 @@ class TestMigrationScript:
 
         # Verify state.yaml was renamed to state.yaml.backup
         assert not state_yaml.exists(), "state.yaml should be renamed"
-        backup_path = tmp_path / "state.yaml.backup"
+        backup_path = writable_temp_dir / "state.yaml.backup"
         assert backup_path.exists(), "state.yaml.backup should exist"
 
     @pytest.mark.asyncio
-    async def test_migrate_missing_state_yaml(self, monkeypatch, tmp_path):
+    async def test_migrate_missing_state_yaml(self, monkeypatch, writable_temp_dir):
         """Migration skips gracefully when state.yaml doesn't exist."""
         import state.migration
-        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', tmp_path / "nonexistent.yaml")
-        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "backup.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', writable_temp_dir / "nonexistent.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', writable_temp_dir / "backup.yaml")
 
         result = await state.migration.migrate_from_yaml()
         assert result is True  # Should succeed (nothing to migrate)
 
-    def test_migrate_rejects_running_app(self, monkeypatch, tmp_path):
+    def test_migrate_rejects_running_app(self, monkeypatch, writable_temp_dir):
         """Migration refuses to run if app is running (process check)."""
         import state.migration
 
@@ -458,7 +465,7 @@ class TestMigrationScript:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_rollback_to_yaml(self, temp_db, monkeypatch, tmp_path):
+    async def test_rollback_to_yaml(self, temp_db, monkeypatch, writable_temp_dir):
         """Rollback exports from SQLite to state.yaml."""
         import state.migration
 
@@ -469,26 +476,26 @@ class TestMigrationScript:
         await test_repo.set_latest_id('rollback_user', 'rollback_id', 'RollUser')
 
         monkeypatch.setattr(state.migration, 'StateRepository', lambda: test_repo)
-        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', tmp_path / "state.yaml")
-        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', tmp_path / "backup.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', writable_temp_dir / "state.yaml")
+        monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', writable_temp_dir / "backup.yaml")
 
         # Pre-create backup file to test preservation
-        backup_file = tmp_path / "backup.yaml"
+        backup_file = writable_temp_dir / "backup.yaml"
         backup_file.write_text("original backup content", encoding='utf-8')
 
         result = await state.migration.rollback_to_yaml()
         assert result is True
 
         # Verify state.yaml was created
-        assert (tmp_path / "state.yaml").exists()
+        assert (writable_temp_dir / "state.yaml").exists()
         import yaml
-        with open(tmp_path / "state.yaml", "r", encoding="utf-8") as f:
+        with open(writable_temp_dir / "state.yaml", "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         assert "rollback_user" in data["accounts"]
         assert data["accounts"]["rollback_user"]["latest_id"] == "rollback_id"
 
         # Verify backup file is preserved after rollback
-        assert (tmp_path / "backup.yaml").exists(), "Backup should be preserved after rollback"
+        assert (writable_temp_dir / "backup.yaml").exists(), "Backup should be preserved after rollback"
 
 
 class TestConcurrency:
