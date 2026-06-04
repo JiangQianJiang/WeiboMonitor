@@ -1,4 +1,5 @@
 """State repository using SQLite for persistence."""
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -6,7 +7,9 @@ from typing import AsyncIterator, Dict, List, Optional
 
 import aiosqlite
 
-DB_PATH = Path(__file__).resolve().parent.parent / "weibo_monitor.db"
+_DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "weibo_monitor.db"
+DB_PATH = Path(os.environ.get("STATE_DIR", str(_DEFAULT_DB_PATH))) / "weibo_monitor.db" \
+    if os.environ.get("STATE_DIR") else _DEFAULT_DB_PATH
 
 
 class StateRepository:

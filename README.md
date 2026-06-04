@@ -4,67 +4,113 @@
 
 ## 功能特性
 
-- 定时监控多个微博账号的最新动态（8秒间隔）
-- Telegram + Server酱双渠道并发推送
-- 状态持久化与配置分离，自动去重
-- 支持本地运行和阿里云函数计算部署
+- 定时监控多个微博账号的最新动态（8 秒间隔）
+- Telegram + Server酱双渠道**并发推送**
+- SQLite 持久化，自动去重，冷启动不推送
+- 推送失败自动中断，下次轮询从失败项继续
+- Docker 部署，开箱即用
 
 ## 技术栈
 
-Python 3.7+, asyncio + aiohttp, APScheduler, loguru, PyYAML, python-telegram-bot
+Python 3.12+, asyncio + aiohttp, APScheduler, loguru, PyYAML, python-telegram-bot, aiosqlite
 
 ## 目录结构
 
 ```
 WeiboMonitor/
 ├── core/
-│   ├── app.py            # 主应用类：调度器、配置加载、更新检测
-│   ├── config.py         # 配置管理：加载/保存 users.yaml
-│   ├── main.py           # 旧入口（已弃用，保留兼容）
-│   └── index.py          # 阿里云FC部署入口
+│   ├── app.py              # 主应用：调度器、更新检测、推送编排
+│   ├── config.py           # 配置管理：加载/保存 users.yaml
+│   └── main.py             # 入口
 ├── monitor/
-│   └── weibo.py          # WeiboMonitor类：异步获取微博API
+│   └── weibo.py            # WeiboMonitor：异步获取微博 API
 ├── notifer/
-│   └── notifer.py        # Notifer类：Telegram + Server酱推送
+│   └── notifer.py          # Notifer：Telegram + Server酱 推送
 ├── state/
-│   ├── __init__.py
-│   └── store.py          # 状态管理：latest_id 去重，持久化到 state.yaml
-├── docs/                 # 项目文档
-├── users.yaml.example    # 配置示例
-├── requirements.txt
-└── README.md
+│   ├── repository.py       # SQLite 持久化层
+│   ├── schema.sql          # 数据库表结构
+│   ├── migration.py        # state.yaml → SQLite 迁移工具
+│   └── store.py            # 全局单例访问
+├── tests/                  # 测试
+├── data/                   # SQLite 数据库（Docker 持久化）
+├── log/                    # 运行日志
+├── users.yaml.example      # 配置模板
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
 ```
 
-## 执行流程
-
-调度器(8秒) → 并发检查所有账号(`asyncio.gather`) → 微博API → 对比 `latest_id` → 更新 `state.yaml` → 并发推送
-
-## 安装
+## 快速开始（Docker）
 
 ```bash
+# 1. 克隆项目
+git clone <your-repo> && cd WeiboMonitor
+
+# 2. 创建配置文件
+cp users.yaml.example users.yaml
+# 编辑 users.yaml，填入你的微博 Cookie 和通知配置
+
+# 3. 启动
+docker compose up -d
+
+# 4. 查看日志
+docker compose logs -f
+```
+
+更新代码后：
+
+```bash
+git pull && docker compose restart
+```
+
+## 本地开发
+
+```bash
+# 安装依赖
 pip install -r requirements.txt
+
+# 配置
+cp users.yaml.example users.yaml
+# 编辑 users.yaml
+
+# 运行
+python -m core.main
+
+# 运行测试
+pytest tests/ -v
 ```
 
 ## 配置
 
-复制示例配置并填写：
+复制模板并填写：
 
 ```bash
 cp users.yaml.example users.yaml
 ```
 
+| 字段 | 说明 |
+|------|------|
+| `cookie` | 微博 Cookie，从浏览器开发者工具获取 |
+| `accounts[].weiboid` | 要监控的微博用户 ID |
+| `notification.tgbottoken` | Telegram Bot Token |
+| `notification.chatid` | Telegram 聊天 ID |
+| `notification.sendkey` | Server酱 SendKey |
 
-```
+> ⚠️ `users.yaml` 包含敏感凭据，**不要提交到 Git**（已在 `.gitignore` 中排除）。
 
-## 运行
+## 数据迁移
 
-本地运行：
+从旧版 `state.yaml` 迁移到 SQLite：
 
 ```bash
-python -m core.main
+python -m state.migration migrate
 ```
 
-阿里云函数计算入口：`core/index.handler`
+回滚：
+
+```bash
+python -m state.migration rollback
+```
 
 ## 许可证
 
