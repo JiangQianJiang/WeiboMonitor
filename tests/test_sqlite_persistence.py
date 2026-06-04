@@ -1153,6 +1153,65 @@ class TestAppCheckSingle:
         app.notifer.send_message.assert_not_called()
         assert test_repo.get_latest_id('type_user') == '123456'
 
+    @pytest.mark.asyncio
+    async def test_malformed_boundary_skipped_older_not_pushed(self, temp_db, monkeypatch):
+        """When old_id is a malformed entry skipped by get_weibo_list, only newer valid entries are pushed."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from core.app import App
+        from monitor.weibo import PageResult
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+
+        # old_id corresponds to a malformed entry that get_weibo_list skips
+        await test_repo.set_latest_id('mal_user', 'old_malformed', 'MalUser')
+        app.repository = test_repo
+
+        # Simulate PageResult from get_weibo_list:
+        # Raw page:   [new_valid, old_malformed(skipped), older_valid]
+        # Filtered:   [new_valid, older_valid]
+        # raw_ids:    ['new_valid', 'old_malformed', 'older_valid']
+        app.monitor = MagicMock()
+        app.monitor.get_weibo_list = AsyncMock(return_value=PageResult(
+            [
+                {'id': 'new_valid', 'screen_name': 'MalUser', 'text': 'New post',
+                 'source': 'Web', 'region_name': 'Beijing'},
+                {'id': 'older_valid', 'screen_name': 'MalUser', 'text': 'Old post',
+                 'source': 'iPhone', 'region_name': 'Shanghai'},
+            ],
+            raw_ids=['new_valid', 'old_malformed', 'older_valid'],
+        ))
+
+        push_texts = []
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(msg) or {
+            'telegram': (True, None),
+        })
+
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+            }
+        }
+
+        with patch('core.app.logger') as mock_logger:
+            await app._check_single({'weiboid': 'mal_user'})
+
+        # Only new_valid should be pushed — older_valid must be excluded
+        assert len(push_texts) == 1
+        assert 'New post' in push_texts[0]
+        assert 'Old post' not in push_texts[0]
+
+        # The "not found on first page" warning must NOT appear (boundary was found in raw_ids)
+        warning_texts = [str(c) for c in mock_logger.warning.call_args_list]
+        assert not any('not found on first page' in t for t in warning_texts)
+
+        # latest_id must advance to the newest valid entry
+        assert test_repo.get_latest_id('mal_user') == 'new_valid'
+
 
 class TestWeiboMonitorGetList:
     """Direct tests for WeiboMonitor.get_weibo_list with mocked aiohttp session."""

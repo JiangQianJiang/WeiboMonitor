@@ -67,8 +67,14 @@ class App:
                 logger.info(f"{latest['screen_name']}首次记录，不推送，latest_id={latest['id']}")
                 return
 
-            # Boundary-prefix: API returns newest-first, find old_id position
-            idx = next((i for i, w in enumerate(info_list) if str(w["id"]) == str(old_id)), None)
+            # Boundary-prefix: use raw page ID sequence when available so that a
+            # malformed (skipped) entry does not erase the stored boundary.
+            raw_ids = getattr(info_list, 'raw_ids', None)
+            if raw_ids is None:
+                # Plain-list fallback for test doubles that return a bare list
+                raw_ids = [str(item['id']) for item in info_list]
+
+            idx = next((i for i, rid in enumerate(raw_ids) if str(rid) == str(old_id)), None)
 
             if idx is None:
                 # old_id not on first page — push all and warn
@@ -79,8 +85,9 @@ class App:
                 logger.debug(f"{info_list[0]['screen_name']}无新微博更新")
                 return
             else:
-                # Take items before old_id, reverse for old→new order
-                new_weibos = list(reversed(info_list[:idx]))
+                # Only push items whose raw position is before the boundary
+                before_ids = {str(rid) for rid in raw_ids[:idx]}
+                new_weibos = list(reversed([item for item in info_list if str(item['id']) in before_ids]))
 
             for info in new_weibos:
                 message = (
