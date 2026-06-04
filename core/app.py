@@ -69,10 +69,8 @@ class App:
 
             # Boundary-prefix: use raw page ID sequence when available so that a
             # malformed (skipped) entry does not erase the stored boundary.
-            raw_ids = getattr(info_list, 'raw_ids', None)
-            if raw_ids is None:
-                # Plain-list fallback for test doubles that return a bare list
-                raw_ids = [str(item['id']) for item in info_list]
+            # Falls back to extracting IDs from items for plain-list test doubles.
+            raw_ids = getattr(info_list, 'raw_ids', None) or [str(item['id']) for item in info_list]
 
             idx = next((i for i, rid in enumerate(raw_ids) if str(rid) == str(old_id)), None)
 
@@ -86,8 +84,8 @@ class App:
                 return
             else:
                 # Only push items whose raw position is before the boundary
-                before_ids = {str(rid) for rid in raw_ids[:idx]}
-                new_weibos = list(reversed([item for item in info_list if str(item['id']) in before_ids]))
+                before_set = {str(rid) for rid in raw_ids[:idx]}
+                new_weibos = [item for item in reversed(info_list) if str(item['id']) in before_set]
 
             for info in new_weibos:
                 message = (

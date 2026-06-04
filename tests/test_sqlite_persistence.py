@@ -3,10 +3,14 @@ import asyncio
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import aiosqlite
 import pytest
 
+from core.app import App
+from monitor.weibo import PageResult, WeiboMonitor
 from state.repository import StateRepository
 
 
@@ -645,8 +649,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_first_account_partial_success(self, temp_db, monkeypatch):
         """First-seen account with cold start: silently records latest ID, does not push."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         # Setup
         app = App()
@@ -703,8 +705,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_first_account_all_fail(self, temp_db, monkeypatch):
         """First-seen account with cold start: silently records latest ID regardless of notifer state."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -756,8 +756,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_existing_account_all_fail(self, temp_db, monkeypatch):
         """Existing account with all channels failing: state not advanced, no history saved."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -811,8 +809,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_multiple_new_weibos_ordered_push(self, temp_db, monkeypatch):
         """Multiple new weibos pushed in chronological order, older entries not pushed."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -858,8 +854,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_old_id_not_on_page_pushes_all(self, temp_db, monkeypatch):
         """When old_id is not on the first page, push all items with warning."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -909,8 +903,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_push_failure_stops_processing(self, temp_db, monkeypatch):
         """When a push fails, stop processing further weibos, keep latest_id at last success."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -964,8 +956,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_no_new_weibo_when_old_id_is_latest(self, temp_db, monkeypatch):
         """When old_id matches the first (newest) item, no push or state update."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -1002,8 +992,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_cold_start_then_next_poll_pushes(self, temp_db, monkeypatch):
         """After cold start records latest_id, the next poll detects and pushes new weibos."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -1054,8 +1042,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_retry_from_failed_item_on_next_poll(self, temp_db, monkeypatch):
         """After push failure stops processing, next poll retries from the failed item."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -1119,8 +1105,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_id_type_mismatch_normalized(self, temp_db, monkeypatch):
         """Integer ID from API matches string ID in database after str() normalization."""
-        from unittest.mock import AsyncMock, MagicMock
-        from core.app import App
 
         app = App()
         test_repo = StateRepository()
@@ -1156,9 +1140,6 @@ class TestAppCheckSingle:
     @pytest.mark.asyncio
     async def test_malformed_boundary_skipped_older_not_pushed(self, temp_db, monkeypatch):
         """When old_id is a malformed entry skipped by get_weibo_list, only newer valid entries are pushed."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-        from core.app import App
-        from monitor.weibo import PageResult
 
         app = App()
         test_repo = StateRepository()
@@ -1219,7 +1200,6 @@ class TestWeiboMonitorGetList:
     @pytest.fixture
     def mock_session(self):
         """Create a mock aiohttp ClientSession."""
-        from unittest.mock import MagicMock
         session = MagicMock()
         session.get = MagicMock()
         return session
@@ -1227,13 +1207,11 @@ class TestWeiboMonitorGetList:
     @pytest.fixture
     def monitor(self, mock_session):
         """Create a WeiboMonitor with mocked session."""
-        from monitor.weibo import WeiboMonitor
         return WeiboMonitor(mock_session)
 
     @pytest.mark.asyncio
     async def test_returns_full_list_with_all_fields(self, monitor, mock_session):
         """Multiple entries returned with all six fields and string IDs."""
-        from unittest.mock import AsyncMock, MagicMock
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -1277,7 +1255,6 @@ class TestWeiboMonitorGetList:
     @pytest.mark.asyncio
     async def test_empty_list_when_no_items(self, monitor, mock_session):
         """Empty data list returns empty Python list."""
-        from unittest.mock import AsyncMock, MagicMock
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -1291,7 +1268,6 @@ class TestWeiboMonitorGetList:
     @pytest.mark.asyncio
     async def test_skips_entry_missing_text_raw(self, monitor, mock_session):
         """Entry missing text_raw is skipped, valid sibling is retained."""
-        from unittest.mock import AsyncMock, MagicMock
 
         mock_response = MagicMock()
         mock_response.raise_for_status = MagicMock()
@@ -1323,8 +1299,6 @@ class TestWeiboMonitorGetList:
     @pytest.mark.asyncio
     async def test_network_error_returns_empty_list(self, monitor, mock_session):
         """aiohttp.ClientError returns empty list, no exception raised."""
-        from unittest.mock import AsyncMock
-        import aiohttp
 
         mock_session.get.side_effect = aiohttp.ClientError('Connection failed')
 
@@ -1334,10 +1308,7 @@ class TestWeiboMonitorGetList:
     @pytest.mark.asyncio
     async def test_timeout_returns_empty_list(self, monitor, mock_session):
         """Timeout returns empty list, no exception raised."""
-        from unittest.mock import AsyncMock
-        import asyncio as _asyncio
-
-        mock_session.get.side_effect = _asyncio.TimeoutError('Request timed out')
+        mock_session.get.side_effect = asyncio.TimeoutError('Request timed out')
 
         result = await monitor.get_weibo_list('test_uid')
         assert result == []

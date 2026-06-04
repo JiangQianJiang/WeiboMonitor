@@ -53,12 +53,12 @@ class WeiboMonitor:
                     except Exception:
                         logger.warning(f"跳过解析失败的微博条目: {uid}")
                 return PageResult(result, raw_ids)
-        except aiohttp.ClientError as e:
+        except aiohttp.ClientError:
             logger.exception(f"网络请求失败: {api_url}")
             return []
-        except (KeyError, IndexError) as e:
+        except (KeyError, IndexError):
             logger.exception(f"数据解析失败: {api_url}")
             return []
-        except Exception as e:
+        except Exception:
             logger.exception(f"获取微博失败: {api_url}")
             return []
