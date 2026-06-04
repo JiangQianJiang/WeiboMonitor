@@ -32,10 +32,10 @@ async def get_latest_id(weiboid: str) -> str:
     return repo.get_latest_id(weiboid)
 
 
-async def set_latest_id(weiboid: str, latest_id: str) -> None:
+async def set_latest_id(weiboid: str, latest_id: str, screen_name: Optional[str] = None) -> None:
     """Async set_latest_id - updates database then memory cache."""
     repo = await get_repository()
-    await repo.set_latest_id(weiboid, latest_id)
+    await repo.set_latest_id(weiboid, latest_id, screen_name)
 
 
 async def save_state(state: Dict) -> None:

@@ -69,8 +69,10 @@ class App:
 
             # Boundary-prefix: use raw page ID sequence when available so that a
             # malformed (skipped) entry does not erase the stored boundary.
-            # Falls back to extracting IDs from items for plain-list test doubles.
-            raw_ids = getattr(info_list, 'raw_ids', None) or [str(item['id']) for item in info_list]
+            raw_ids = getattr(info_list, 'raw_ids', None)
+            if raw_ids is None:
+                # Plain-list fallback for test doubles that return a bare list
+                raw_ids = [str(item['id']) for item in info_list]
 
             idx = next((i for i, rid in enumerate(raw_ids) if str(rid) == str(old_id)), None)
 
@@ -123,7 +125,10 @@ class App:
                         await self.repository.log_push(weiboid, info["id"], channel, status, error)
                     logger.info(f"{info['screen_name']}推送成功，状态已更新")
                 else:
-                    # All channels failed - log and stop without advancing state
+                    # All channels failed — ensure parent row exists before logging
+                    # Use current latest_id (may have been advanced by prior items in this batch)
+                    current_id = self.repository.get_latest_id(weiboid)
+                    await self.repository.set_latest_id(weiboid, current_id, info.get("screen_name"))
                     for channel, (success, error) in push_results.items():
                         await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
                     logger.error(f"{info['screen_name']}推送失败，中断后续推送")

@@ -12,7 +12,7 @@ class PageResult(list):
 
     def __init__(self, items, raw_ids=None):
         super().__init__(items)
-        self.raw_ids = raw_ids if raw_ids is not None else [item['id'] for item in items]
+        self.raw_ids = raw_ids if raw_ids is not None else [str(item['id']) for item in items]
 
 
 class WeiboMonitor:
@@ -51,7 +51,7 @@ class WeiboMonitor:
                             'region_name': w.get('region_name', ''),
                         })
                     except Exception:
-                        logger.warning(f"跳过解析失败的微博条目: {uid}")
+                        logger.exception(f"跳过解析失败的微博条目: {uid}")
                 return PageResult(result, raw_ids)
         except aiohttp.ClientError:
             logger.exception(f"网络请求失败: {api_url}")
