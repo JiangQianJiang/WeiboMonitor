@@ -18,3 +18,4 @@ build/
 .humanize/
 *.db
 codex-loguru-check/
+.DS_Store
