@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-06-04
+
+### 新增
+
+- **feat(deploy)**: 添加 Docker 部署支持
+  - 新增 `Dockerfile`（基于 `python:3.12-slim`），代码通过 volume 挂载，改动后只需 restart 无需 rebuild
+  - 新增 `docker-compose.yml`，配置代码/配置/数据/日志目录挂载，`restart: unless-stopped` 自动重启
+  - 新增 `.dockerignore` 排除无用文件
+  - 新增 `STATE_DIR` 环境变量支持，允许自定义 SQLite 数据库存储路径
+  - README 新增 Docker 部署章节
+
+### 修复
+
+- **fix(monitor)**: 防止宕机期间遗漏新微博 —— 边界前缀处理
+  - `get_latest_weibo()` 重构为 `get_weibo_list()`，返回第一页全部条目而非仅最新一条
+  - 通过 `old_id` 在第一页中的位置确定新微博范围，推送 `old_id` 之前的所有条目（旧→新顺序）
+  - `old_id` 不在第一页时推送全部条目并告警，避免长时间宕机导致遗漏
+  - 推送失败时不更新状态，确保下次轮询重试；部分渠道成功时仍记录成功渠道的推送日志
+
+- **fix(monitor)**: 保留原始页面 ID 序列，防止格式错误的条目导致旧微博泄漏
+  - 新增 `PageResult` 类（`list` 子类），同时保存可推送条目和原始 ID 序列（含被跳过的条目）
+  - 格式错误的条目（缺少 `text_raw`）被跳过推送但保留其 ID 在 `raw_ids` 中
+  - 边界检测基于 `raw_ids` 位置，避免因跳过条目导致 `old_id` 匹配偏移而泄漏旧微博
+
+- **fix(state)**: 隔离 migration 模块中的 `psutil` 依赖
+  - `import psutil` 从模块顶层移至 `_check_running_processes()` 函数内部
+  - 避免在未安装 `psutil` 的环境中导入 `migration` 模块时崩溃
+
+- **fix(review)**: 处理 Codex review 发现的代码问题
+  - 修复 `_check_single()` 中推送逻辑的边界条件
+  - 修复 `get_weibo_list()` 中异常微博条目的容错处理
+
+### 改进
+
+- **refactor(monitor)**: 简化表达式，合并测试导入
+  - `core/app.py` 和 `monitor/weibo.py` 中简化条件判断和循环逻辑
+  - 测试文件合并重复的 import 语句，减少冗余
+
+### 测试
+
+- 新增 `tests/test_weibo_monitor.py`：`WeiboMonitor.get_weibo_list` 独立测试，使用 FakeSession 模拟 HTTP 响应
+- `tests/test_sqlite_persistence.py` 新增：边界前缀处理测试、原始 ID 序列测试、直接监控测试、推送失败不回退状态测试等
+
+### 杂项
+
+- **chore**: 从版本控制中移除 `docs/specs/` 目录
+
 ## 2026-04-24
 
 ### 重构
