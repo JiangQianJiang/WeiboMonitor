@@ -4,7 +4,13 @@ import argparse
 import sys
 from pathlib import Path
 
-import psutil
+try:
+    import psutil
+    _PSUTIL_AVAILABLE = True
+except ImportError:
+    psutil = None
+    _PSUTIL_AVAILABLE = False
+
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -17,6 +23,8 @@ STATE_YAML_BACKUP = Path(__file__).resolve().parent.parent / "state.yaml.backup"
 
 def is_app_running() -> bool:
     """Check if WeiboMonitor app is currently running."""
+    if not _PSUTIL_AVAILABLE:
+        return False
     for proc in psutil.process_iter(['name', 'cmdline']):
         try:
             if proc.info['name'] and 'python' in proc.info['name'].lower():

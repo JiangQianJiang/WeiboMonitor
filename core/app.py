@@ -53,57 +53,86 @@ class App:
     async def _check_single(self, account: dict):
         weiboid = account["weiboid"]
         try:
-            info = await self.monitor.get_latest_weibo(weiboid)
-            if not info:
+            info_list = await self.monitor.get_weibo_list(weiboid)
+            if not info_list:
                 logger.warning(f"{weiboid}未获取到微博内容")
                 return
 
             old_id = self.repository.get_latest_id(weiboid)
-            if old_id == info["id"]:
-                logger.debug(f"{info['screen_name']}无新微博更新")
+
+            # Cold start: silently record the newest weibo ID, don't push
+            if not old_id:
+                latest = info_list[0]
+                await self.repository.set_latest_id(weiboid, latest["id"], latest["screen_name"])
+                logger.info(f"{latest['screen_name']}首次记录，不推送，latest_id={latest['id']}")
                 return
 
-            message = (
-                f"【{info['screen_name']}】发表微博：\n\n"
-                f"{info['text']}\n\n"
-                f"{info['region_name']} | {info['source']}\n\n"
-                f"https://weibo.com/{weiboid}/{info['id']}\n\n"
-            )
-            # Escape user data fields BEFORE template substitution to preserve template markup
-            telegram_message = self.config["notification"]["telegram_template"].format(
-                screen_name=escape_markdown_v2(info["screen_name"]),
-                text=escape_markdown_v2(info["text"]),
-                region_name=escape_markdown_v2(info["region_name"]),
-                source=escape_markdown_v2(info["source"]),
-                url=escape_markdown_v2(f"https://weibo.com/{weiboid}/{info['id']}"),
-            )
-            logger.info(f"{info['screen_name']}检测到新微博，准备推送")
+            # Boundary-prefix: use raw page ID sequence when available so that a
+            # malformed (skipped) entry does not erase the stored boundary.
+            raw_ids = getattr(info_list, 'raw_ids', None)
+            if raw_ids is None:
+                # Plain-list fallback for test doubles that return a bare list
+                raw_ids = [str(item['id']) for item in info_list]
 
-            push_results = await self.notifer.send_message(
-                message, telegram_message, f"{info['screen_name']}发微博啦"
-            )
+            idx = next((i for i, rid in enumerate(raw_ids) if str(rid) == str(old_id)), None)
 
-            info["weiboid"] = weiboid
-
-            # Check if at least one channel succeeded
-            any_success = any(success for success, _ in push_results.values()) if push_results else False
-
-            if any_success:
-                # At least one channel succeeded - ensure parent record first
-                await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
-                await self.repository.save_weibo_history(info)
-                # Log all push results after parent exists
-                for channel, (success, error) in push_results.items():
-                    status = "success" if success else "failed"
-                    await self.repository.log_push(weiboid, info["id"], channel, status, error)
-                logger.info(f"{info['screen_name']}推送成功，状态已更新")
+            if idx is None:
+                # old_id not on first page — push all and warn
+                logger.warning(f"{weiboid}: old_id {old_id} not found on first page, pushing all {len(info_list)} items")
+                new_weibos = list(reversed(info_list))
+            elif idx == 0:
+                # First item is old_id, no new weibos
+                logger.debug(f"{info_list[0]['screen_name']}无新微博更新")
+                return
             else:
-                # All channels failed - ensure parent record exists but don't advance state
-                await self.repository.set_latest_id(weiboid, old_id if old_id else "", info.get("screen_name", ""))
-                # Log all as failed
-                for channel, (success, error) in push_results.items():
-                    await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
-                logger.error(f"{info['screen_name']}所有渠道均失败，已记录日志")
+                # Only push items whose raw position is before the boundary
+                before_set = {str(rid) for rid in raw_ids[:idx]}
+                new_weibos = [item for item in reversed(info_list) if str(item['id']) in before_set]
+
+            for info in new_weibos:
+                message = (
+                    f"【{info['screen_name']}】发表微博：\n\n"
+                    f"{info['text']}\n\n"
+                    f"{info['region_name']} | {info['source']}\n\n"
+                    f"https://weibo.com/{weiboid}/{info['id']}\n\n"
+                )
+                # Escape user data fields BEFORE template substitution to preserve template markup
+                telegram_message = self.config["notification"]["telegram_template"].format(
+                    screen_name=escape_markdown_v2(info["screen_name"]),
+                    text=escape_markdown_v2(info["text"]),
+                    region_name=escape_markdown_v2(info["region_name"]),
+                    source=escape_markdown_v2(info["source"]),
+                    url=escape_markdown_v2(f"https://weibo.com/{weiboid}/{info['id']}"),
+                )
+                logger.info(f"{info['screen_name']}检测到新微博，准备推送")
+
+                push_results = await self.notifer.send_message(
+                    message, telegram_message, f"{info['screen_name']}发微博啦"
+                )
+
+                info["weiboid"] = weiboid
+
+                # Check if at least one channel succeeded
+                any_success = any(success for success, _ in push_results.values()) if push_results else False
+
+                if any_success:
+                    # At least one channel succeeded - ensure parent record first
+                    await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
+                    await self.repository.save_weibo_history(info)
+                    # Log all push results after parent exists
+                    for channel, (success, error) in push_results.items():
+                        status = "success" if success else "failed"
+                        await self.repository.log_push(weiboid, info["id"], channel, status, error)
+                    logger.info(f"{info['screen_name']}推送成功，状态已更新")
+                else:
+                    # All channels failed — ensure parent row exists before logging
+                    # Use current latest_id (may have been advanced by prior items in this batch)
+                    current_id = self.repository.get_latest_id(weiboid)
+                    await self.repository.set_latest_id(weiboid, current_id, info.get("screen_name"))
+                    for channel, (success, error) in push_results.items():
+                        await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
+                    logger.error(f"{info['screen_name']}推送失败，中断后续推送")
+                    break
 
         except Exception:
             logger.exception(f"检查微博更新失败: {weiboid}")

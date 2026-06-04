@@ -1,0 +1,20 @@
+services:
+  weibo-monitor:
+    build: .
+    container_name: weibo-monitor
+    restart: unless-stopped
+    volumes:
+      # 代码挂载 — 改代码后只需 docker compose restart，不用 rebuild
+      - ./core:/app/core
+      - ./monitor:/app/monitor
+      - ./notifer:/app/notifer
+      - ./state:/app/state
+      # 配置文件 — 只读挂载，避免容器内误改
+      - ./users.yaml:/app/users.yaml:ro
+      # 数据持久化 — SQLite 数据库
+      - ./data:/app/data
+      # 日志持久化
+      - ./log:/app/log
+    environment:
+      - TZ=Asia/Shanghai
+      - STATE_DIR=/app/data

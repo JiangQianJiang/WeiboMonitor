@@ -17,4 +17,6 @@ dist/
 build/
 .humanize/
 *.db
+data/
 codex-loguru-check/
+.DS_Store
