@@ -417,6 +417,7 @@ class TestMigrationScript:
     async def test_migrate_success(self, temp_db, monkeypatch, writable_temp_dir):
         """Migration script reads all accounts from state.yaml and migrates to SQLite."""
         import state.migration
+        monkeypatch.setattr(state.migration, 'is_app_running', lambda: False)
 
         # Create temp state.yaml
         state_yaml = writable_temp_dir / "state.yaml"
@@ -448,6 +449,7 @@ class TestMigrationScript:
     async def test_migrate_missing_state_yaml(self, monkeypatch, writable_temp_dir):
         """Migration skips gracefully when state.yaml doesn't exist."""
         import state.migration
+        monkeypatch.setattr(state.migration, 'is_app_running', lambda: False)
         monkeypatch.setattr(state.migration, 'STATE_YAML_PATH', writable_temp_dir / "nonexistent.yaml")
         monkeypatch.setattr(state.migration, 'STATE_YAML_BACKUP', writable_temp_dir / "backup.yaml")
 
@@ -468,6 +470,7 @@ class TestMigrationScript:
     async def test_rollback_to_yaml(self, temp_db, monkeypatch, writable_temp_dir):
         """Rollback exports from SQLite to state.yaml."""
         import state.migration
+        monkeypatch.setattr(state.migration, 'is_app_running', lambda: False)
 
         # Setup repo with data
         test_repo = StateRepository()
@@ -1149,3 +1152,133 @@ class TestAppCheckSingle:
         # No push should happen — old_id matches the first item (after normalization)
         app.notifer.send_message.assert_not_called()
         assert test_repo.get_latest_id('type_user') == '123456'
+
+
+class TestWeiboMonitorGetList:
+    """Direct tests for WeiboMonitor.get_weibo_list with mocked aiohttp session."""
+
+    @pytest.fixture
+    def mock_session(self):
+        """Create a mock aiohttp ClientSession."""
+        from unittest.mock import MagicMock
+        session = MagicMock()
+        session.get = MagicMock()
+        return session
+
+    @pytest.fixture
+    def monitor(self, mock_session):
+        """Create a WeiboMonitor with mocked session."""
+        from monitor.weibo import WeiboMonitor
+        return WeiboMonitor(mock_session)
+
+    @pytest.mark.asyncio
+    async def test_returns_full_list_with_all_fields(self, monitor, mock_session):
+        """Multiple entries returned with all six fields and string IDs."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(return_value={
+            'data': {
+                'list': [
+                    {
+                        'id': 12345,
+                        'text_raw': 'First post',
+                        'created_at': '2024-01-01 12:00:00',
+                        'user': {'screen_name': 'User1'},
+                        'source': 'Web',
+                        'region_name': 'Beijing',
+                    },
+                    {
+                        'id': '67890',
+                        'text_raw': 'Second post',
+                        'created_at': '2024-01-01 11:00:00',
+                        'user': {'screen_name': 'User2'},
+                        'source': 'iPhone',
+                        'region_name': 'Shanghai',
+                    },
+                ]
+            }
+        })
+        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        result = await monitor.get_weibo_list('test_uid')
+
+        assert len(result) == 2
+        assert result[0]['text'] == 'First post'
+        assert result[0]['id'] == '12345'  # str() normalization
+        assert result[0]['screen_name'] == 'User1'
+        assert result[0]['source'] == 'Web'
+        assert result[0]['region_name'] == 'Beijing'
+        assert result[0]['time'] == '2024-01-01 12:00:00'
+        assert result[1]['text'] == 'Second post'
+        assert result[1]['id'] == '67890'
+
+    @pytest.mark.asyncio
+    async def test_empty_list_when_no_items(self, monitor, mock_session):
+        """Empty data list returns empty Python list."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(return_value={'data': {'list': []}})
+        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        result = await monitor.get_weibo_list('test_uid')
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_skips_entry_missing_text_raw(self, monitor, mock_session):
+        """Entry missing text_raw is skipped, valid sibling is retained."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json = AsyncMock(return_value={
+            'data': {
+                'list': [
+                    {
+                        'id': 'valid_id',
+                        'text_raw': 'Valid post',
+                        'user': {'screen_name': 'Valid'},
+                    },
+                    {
+                        'id': 'bad_id',
+                        # text_raw intentionally missing
+                        'user': {'screen_name': 'Bad'},
+                    },
+                ]
+            }
+        })
+        mock_session.get.return_value.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_session.get.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        result = await monitor.get_weibo_list('test_uid')
+
+        assert len(result) == 1
+        assert result[0]['id'] == 'valid_id'
+        assert result[0]['text'] == 'Valid post'
+
+    @pytest.mark.asyncio
+    async def test_network_error_returns_empty_list(self, monitor, mock_session):
+        """aiohttp.ClientError returns empty list, no exception raised."""
+        from unittest.mock import AsyncMock
+        import aiohttp
+
+        mock_session.get.side_effect = aiohttp.ClientError('Connection failed')
+
+        result = await monitor.get_weibo_list('test_uid')
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_empty_list(self, monitor, mock_session):
+        """Timeout returns empty list, no exception raised."""
+        from unittest.mock import AsyncMock
+        import asyncio as _asyncio
+
+        mock_session.get.side_effect = _asyncio.TimeoutError('Request timed out')
+
+        result = await monitor.get_weibo_list('test_uid')
+        assert result == []
