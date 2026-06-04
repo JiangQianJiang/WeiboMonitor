@@ -807,7 +807,7 @@ class TestAppCheckSingle:
 
     @pytest.mark.asyncio
     async def test_multiple_new_weibos_ordered_push(self, temp_db, monkeypatch):
-        """AC-3: Multiple new weibos pushed in chronological order, older entries not pushed."""
+        """Multiple new weibos pushed in chronological order, older entries not pushed."""
         from unittest.mock import AsyncMock, MagicMock
         from core.app import App
 
@@ -854,8 +854,8 @@ class TestAppCheckSingle:
 
     @pytest.mark.asyncio
     async def test_old_id_not_on_page_pushes_all(self, temp_db, monkeypatch):
-        """AC-4: When old_id is not on the first page, push all items with warning."""
-        from unittest.mock import AsyncMock, MagicMock
+        """When old_id is not on the first page, push all items with warning."""
+        from unittest.mock import AsyncMock, MagicMock, patch
         from core.app import App
 
         app = App()
@@ -886,19 +886,26 @@ class TestAppCheckSingle:
             }
         }
 
-        await app._check_single({'weiboid': 'gap_user'})
+        with patch('core.app.logger') as mock_logger:
+            await app._check_single({'weiboid': 'gap_user'})
 
         # Should push both in chronological order: newer → newest
         assert len(push_call_texts) == 2
         assert 'Newer' in push_call_texts[0]
         assert 'Newest' in push_call_texts[1]
 
+        # Should emit warning about missing old_id
+        mock_logger.warning.assert_called()
+        warning_text = mock_logger.warning.call_args[0][0]
+        assert 'very_old_id' in warning_text
+        assert 'not found on first page' in warning_text
+
         # latest_id should be newest
         assert test_repo.get_latest_id('gap_user') == 'newest'
 
     @pytest.mark.asyncio
     async def test_push_failure_stops_processing(self, temp_db, monkeypatch):
-        """AC-5: When a push fails, stop processing further weibos, keep latest_id at last success."""
+        """When a push fails, stop processing further weibos, keep latest_id at last success."""
         from unittest.mock import AsyncMock, MagicMock
         from core.app import App
 
@@ -953,7 +960,7 @@ class TestAppCheckSingle:
 
     @pytest.mark.asyncio
     async def test_no_new_weibo_when_old_id_is_latest(self, temp_db, monkeypatch):
-        """AC-3: When old_id matches the first (newest) item, no push or state update."""
+        """When old_id matches the first (newest) item, no push or state update."""
         from unittest.mock import AsyncMock, MagicMock
         from core.app import App
 
@@ -988,3 +995,157 @@ class TestAppCheckSingle:
 
         # latest_id should remain unchanged
         assert test_repo.get_latest_id('same_user') == 'latest_id'
+
+    @pytest.mark.asyncio
+    async def test_cold_start_then_next_poll_pushes(self, temp_db, monkeypatch):
+        """After cold start records latest_id, the next poll detects and pushes new weibos."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+        app.repository = test_repo
+
+        # First poll: cold start — no old_id
+        app.monitor = MagicMock()
+        app.monitor.get_weibo_list = AsyncMock(return_value=[{
+            'id': 'first_id', 'screen_name': 'ColdUser', 'text': 'First post',
+            'source': 'Web', 'region_name': 'Beijing'
+        }])
+
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock()
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+            }
+        }
+
+        await app._check_single({'weiboid': 'cold_user'})
+
+        # Cold start: should not push, just record
+        app.notifer.send_message.assert_not_called()
+        assert test_repo.get_latest_id('cold_user') == 'first_id'
+
+        # Second poll: new weibo available
+        app.monitor.get_weibo_list = AsyncMock(return_value=[
+            {'id': 'second_id', 'screen_name': 'ColdUser', 'text': 'Second post', 'source': 'iPhone', 'region_name': 'Shanghai'},
+            {'id': 'first_id', 'screen_name': 'ColdUser', 'text': 'First post', 'source': 'Web', 'region_name': 'Beijing'},
+        ])
+
+        push_texts = []
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(msg) or {
+            'telegram': (True, None),
+        })
+
+        await app._check_single({'weiboid': 'cold_user'})
+
+        # Should push the new weibo
+        assert len(push_texts) == 1
+        assert 'Second post' in push_texts[0]
+        assert test_repo.get_latest_id('cold_user') == 'second_id'
+
+    @pytest.mark.asyncio
+    async def test_retry_from_failed_item_on_next_poll(self, temp_db, monkeypatch):
+        """After push failure stops processing, next poll retries from the failed item."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+
+        await test_repo.set_latest_id('retry_user', 'old_id', 'RetryUser')
+        app.repository = test_repo
+
+        # First poll: 3 new weibos, 2nd push fails
+        app.monitor = MagicMock()
+        app.monitor.get_weibo_list = AsyncMock(return_value=[
+            {'id': 'new3', 'screen_name': 'RetryUser', 'text': 'Third', 'source': 'Web', 'region_name': 'Beijing'},
+            {'id': 'new2', 'screen_name': 'RetryUser', 'text': 'Second', 'source': 'Web', 'region_name': 'Beijing'},
+            {'id': 'new1', 'screen_name': 'RetryUser', 'text': 'First', 'source': 'Web', 'region_name': 'Beijing'},
+            {'id': 'old_id', 'screen_name': 'RetryUser', 'text': 'Old', 'source': 'Web', 'region_name': 'Beijing'},
+        ])
+
+        call_count = [0]
+        async def fail_second(msg, tg, title):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return {'telegram': (False, 'Connection error')}
+            return {'telegram': (True, None)}
+
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock(side_effect=fail_second)
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+            }
+        }
+
+        await app._check_single({'weiboid': 'retry_user'})
+
+        # First poll: only first item succeeded
+        assert call_count[0] == 2
+        assert test_repo.get_latest_id('retry_user') == 'new1'
+
+        # Second poll: same list, should retry from new2
+        push_retry_texts = []
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_retry_texts.append(msg) or {
+            'telegram': (True, None),
+        })
+
+        await app._check_single({'weiboid': 'retry_user'})
+
+        # Should push new2 and new3 (both succeed this time)
+        assert len(push_retry_texts) == 2
+        assert 'Second' in push_retry_texts[0]
+        assert 'Third' in push_retry_texts[1]
+        assert test_repo.get_latest_id('retry_user') == 'new3'
+
+        history = await test_repo.get_weibo_history('retry_user')
+        history_ids = [h['weibo_id'] for h in history]
+        assert 'new1' in history_ids
+        assert 'new2' in history_ids
+        assert 'new3' in history_ids
+
+    @pytest.mark.asyncio
+    async def test_id_type_mismatch_normalized(self, temp_db, monkeypatch):
+        """Integer ID from API matches string ID in database after str() normalization."""
+        from unittest.mock import AsyncMock, MagicMock
+        from core.app import App
+
+        app = App()
+        test_repo = StateRepository()
+        monkeypatch.setattr(test_repo, '_db_path', Path(temp_db))
+        await test_repo.initialize()
+
+        # Database stores ID as string
+        await test_repo.set_latest_id('type_user', '123456', 'TypeUser')
+        app.repository = test_repo
+
+        # API returns integer ID that matches the string
+        app.monitor = MagicMock()
+        app.monitor.get_weibo_list = AsyncMock(return_value=[
+            {'id': 123456, 'screen_name': 'TypeUser', 'text': 'Already seen', 'source': 'Web', 'region_name': 'Beijing'},
+            {'id': 111111, 'screen_name': 'TypeUser', 'text': 'Older post', 'source': 'Web', 'region_name': 'Beijing'},
+        ])
+
+        app.notifer = MagicMock()
+        app.notifer.send_message = AsyncMock()
+        app.config = {
+            'notification': {
+                'telegram_template': '{screen_name}: {text}',
+                'enable_telegram': True,
+            }
+        }
+
+        await app._check_single({'weiboid': 'type_user'})
+
+        # No push should happen — old_id matches the first item (after normalization)
+        app.notifer.send_message.assert_not_called()
+        assert test_repo.get_latest_id('type_user') == '123456'

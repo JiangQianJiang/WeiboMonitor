@@ -68,7 +68,7 @@ class App:
                 return
 
             # Boundary-prefix: API returns newest-first, find old_id position
-            idx = next((i for i, w in enumerate(info_list) if w["id"] == old_id), None)
+            idx = next((i for i, w in enumerate(info_list) if str(w["id"]) == str(old_id)), None)
 
             if idx is None:
                 # old_id not on first page — push all and warn

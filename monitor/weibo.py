@@ -18,8 +18,12 @@ class WeiboMonitor:
                 result = []
                 for w in data['data']['list']:
                     try:
+                        # Skip entries missing required fields
+                        if 'text_raw' not in w:
+                            logger.warning(f"跳过缺少 text_raw 的微博条目: {uid}")
+                            continue
                         result.append({
-                            'text': w.get('text_raw', ''),
+                            'text': w['text_raw'],
                             'id': str(w['id']),
                             'time': w.get('created_at', ''),
                             'screen_name': w.get('user', {}).get('screen_name', ''),
