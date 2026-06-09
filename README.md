@@ -69,6 +69,9 @@ git pull && docker compose restart
 # 安装依赖
 pip install -r requirements.txt
 
+# 安装测试依赖
+pip install pytest pytest-asyncio
+
 # 配置
 cp users.yaml.example users.yaml
 # 编辑 users.yaml
@@ -106,10 +109,22 @@ cp users.yaml.example users.yaml
 python -m state.migration migrate
 ```
 
+如果使用 Docker 部署，数据库需要写入 Compose 挂载的 `./data` 目录：
+
+```bash
+STATE_DIR=./data python -m state.migration migrate
+```
+
 回滚：
 
 ```bash
 python -m state.migration rollback
+```
+
+Docker 部署回滚同样需要指定 `STATE_DIR`：
+
+```bash
+STATE_DIR=./data python -m state.migration rollback
 ```
 
 ## 许可证
