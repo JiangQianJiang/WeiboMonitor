@@ -19,7 +19,7 @@ notification:
   telegram_template: |
     *{screen_name}* 发表了新微博：
     {text}
-    {region_name} | {source}
+    {region_name} \| {source}
     [查看详情]({url})
   tgbottoken: "<YOUR_TELEGRAM_BOT_TOKEN>"  # Telegram Bot 的 Token
   chatid: "<YOUR_CHAT_ID>"                 # Telegram 聊天ID
