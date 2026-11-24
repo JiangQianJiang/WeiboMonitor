@@ -7,8 +7,9 @@ from monitor.weibo import WeiboMonitor
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status=200):
         self.payload = payload
+        self.status = status
 
     async def __aenter__(self):
         return self
@@ -91,6 +92,18 @@ async def test_get_weibo_list_returns_empty_list_for_empty_api_list():
     result = await WeiboMonitor(session).get_weibo_list("uid")
 
     assert result == []
+
+
+@pytest.mark.asyncio
+async def test_get_weibo_list_does_not_follow_redirects_with_cookie():
+    session = FakeSession(FakeResponse(api_payload([{"id": 1, "text_raw": "ignored"}]), status=302))
+    monitor = WeiboMonitor(session, cookie="session=synthetic")
+
+    assert await monitor.get_weibo_list("uid") == []
+    [(url, options)] = session.requests
+    assert url.startswith("https://www.weibo.com/")
+    assert options["headers"]["Cookie"] == "session=synthetic"
+    assert options["allow_redirects"] is False
 
 
 @pytest.mark.asyncio
