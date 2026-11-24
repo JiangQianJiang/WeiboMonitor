@@ -27,11 +27,13 @@ class App:
         )
         self.config = load_config()
         self.repository = await get_repository()
-        self.session = aiohttp.ClientSession(headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0',
-            'Cookie': self.config.get("cookie", ""),
-        })
-        self.monitor = WeiboMonitor(self.session)
+        self.session = aiohttp.ClientSession(
+            headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0',
+            },
+            cookie_jar=aiohttp.DummyCookieJar(),
+        )
+        self.monitor = WeiboMonitor(self.session, cookie=self.config.get("cookie", ""))
         self.notifer = Notifer(self.session, self.config["notification"])
         logger.info("App 启动完成")
 

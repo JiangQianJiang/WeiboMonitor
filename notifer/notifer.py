@@ -19,44 +19,36 @@ class Notifer:
 
     async def ms_send(self, desp: str = '', title: str = "weibo") -> None:
         # server酱推送
-        try:
-            sendkey = self.notification_config['sendkey']
-            # 判断 sendkey 格式并构造 URL
-            if sendkey.startswith('sctp'):
-                # 新版 sendkey 格式: sctp{num}t...
-                match = re.match(r'sctp(\d+)t', sendkey)
-                if not match:
-                    raise ValueError(f'Invalid sendkey format: {sendkey}')
-                num = match.group(1)
-                url = f"https://{num}.push.ft07.com/send/{sendkey}.send"
-            else:
-                # 旧版 sendkey 格式
-                url = f"https://sctapi.ftqq.com/{sendkey}.send"
+        sendkey = self.notification_config['sendkey']
+        # 判断 sendkey 格式并构造 URL
+        if sendkey.startswith('sctp'):
+            # 新版 sendkey 格式: sctp{num}t...
+            match = re.match(r'sctp(\d+)t', sendkey)
+            if not match:
+                raise ValueError('Invalid sendkey format')
+            num = match.group(1)
+            url = f"https://{num}.push.ft07.com/send/{sendkey}.send"
+        else:
+            # 旧版 sendkey 格式
+            url = f"https://sctapi.ftqq.com/{sendkey}.send"
 
-            response = await self.session.post(
-                url=url,
-                json={"title": title, "desp": desp},
-                headers={"Content-Type": "application/json;charset=utf-8"})
-            response.raise_for_status()
-            logger.info("Server酱推送成功！")
-        except Exception as e:
-            logger.exception(f"Server酱推送失败: {e}")
-            raise
+        response = await self.session.post(
+            url=url,
+            json={"title": title, "desp": desp},
+            headers={"Content-Type": "application/json;charset=utf-8"})
+        response.raise_for_status()
+        logger.info("Server酱推送成功！")
 
     async def telegram_send(self, message: str) -> None:
-        try:
-            bot = telegram.Bot(self.notification_config['tgbottoken'])
-            await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
-                                   disable_web_page_preview=True)
-            logger.info("telegram推送成功！")
-        except Exception as e:
-            logger.exception(f"telegram推送失败：{e}")
-            raise
+        bot = telegram.Bot(self.notification_config['tgbottoken'])
+        await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
+                               disable_web_page_preview=True)
+        logger.info("telegram推送成功！")
 
     async def send_message(self, message: str, telegram_message: str, title: str) -> Dict[str, Tuple[bool, Optional[str]]]:
         """
         Push message to telegram and/or serverchan based on config switches.
-        Returns dict of {channel: (success: bool, error: Optional[str])} for accurate logging.
+        Returns {channel: (success, safe_error_summary)} for logging and persistence.
 
         message: Server酱 message
         telegram_message: Telegram message
@@ -78,9 +70,13 @@ class Notifer:
 
         results: Dict[str, Tuple[bool, Optional[str]]] = {}
         for (channel, _), result in zip(channels.items(), results_list):
-            if isinstance(result, Exception):
-                logger.error(f"{channel} push failed: {result}")
-                results[channel] = (False, str(result))
+            if isinstance(result, BaseException):
+                # Provider exception strings may contain credentials in request URLs.
+                error = type(result).__name__
+                if isinstance(result, aiohttp.ClientResponseError):
+                    error = f"{error} (HTTP {result.status})"
+                logger.error(f"{channel} push failed: {error}")
+                results[channel] = (False, error)
             else:
                 results[channel] = (True, None)
 
