@@ -16,8 +16,11 @@ class PageResult(list):
 
 
 class WeiboMonitor:
-    def __init__(self, session: aiohttp.ClientSession):
+    def __init__(self, session: aiohttp.ClientSession, cookie: str = ""):
         self.session = session
+        self.headers = {'Referer': 'https://weibo.com/'}
+        if cookie:
+            self.headers['Cookie'] = cookie
 
     async def get_weibo_list(self, uid):
         """获取微博列表（第一页），返回 PageResult（list 子类，含 raw_ids 用于边界检测）。
@@ -25,10 +28,15 @@ class WeiboMonitor:
         空列表或请求失败时返回 []。
         """
         api_url = f'https://www.weibo.com/ajax/statuses/mymblog?uid={uid}&page=1&feature=0'
-        headers = {'Referer': 'https://weibo.com/'}
         try:
-            async with self.session.get(api_url, headers=headers, timeout=5) as response:
+            # Prevent the request-specific Cookie from following redirects.
+            async with self.session.get(
+                api_url, headers=self.headers, timeout=5, allow_redirects=False
+            ) as response:
                 response.raise_for_status()
+                if 300 <= response.status < 400:
+                    logger.warning(f"微博接口重定向: {uid} (HTTP {response.status})")
+                    return []
                 data = await response.json()
 
                 raw_ids = []
@@ -50,15 +58,12 @@ class WeiboMonitor:
                             'source': w.get('source', ''),
                             'region_name': w.get('region_name', ''),
                         })
-                    except Exception:
-                        logger.exception(f"跳过解析失败的微博条目: {uid}")
+                    except Exception as error:
+                        logger.warning(f"跳过解析失败的微博条目: {uid} ({type(error).__name__})")
                 return PageResult(result, raw_ids)
-        except aiohttp.ClientError:
-            logger.exception(f"网络请求失败: {api_url}")
+        except aiohttp.ClientResponseError as error:
+            logger.error(f"微博接口响应错误: {uid} (HTTP {error.status})")
             return []
-        except (KeyError, IndexError):
-            logger.exception(f"数据解析失败: {api_url}")
-            return []
-        except Exception:
-            logger.exception(f"获取微博失败: {api_url}")
+        except Exception as error:
+            logger.error(f"获取微博失败: {uid} ({type(error).__name__})")
             return []

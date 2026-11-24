@@ -112,7 +112,7 @@ class TestConcurrentPush:
         results = await notifer.send_message("test", "test_tg", "title")
 
         # Telegram failed, serverchan succeeded
-        assert results['telegram'] == (False, "Telegram API error")
+        assert results['telegram'] == (False, "Exception")
         assert results['serverchan'] == (True, None)
 
     @pytest.mark.asyncio
@@ -140,5 +140,5 @@ class TestConcurrentPush:
         results = await notifer.send_message("test", "test_tg", "title")
 
         # Both failed
-        assert results['telegram'] == (False, "Telegram error")
-        assert results['serverchan'] == (False, "Serverchan error")
+        assert results['telegram'] == (False, "Exception")
+        assert results['serverchan'] == (False, "Exception")
