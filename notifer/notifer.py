@@ -12,31 +12,56 @@ def escape_markdown_v2(text: str) -> str:
     return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
 
 
+class ServerChanResponseError(RuntimeError):
+    """A response error with no request URL or provider message."""
+
+    def __init__(self, *, status: int | None = None, code: int | None = None):
+        self.status = status
+        self.code = code
+        if status is not None:
+            message = f"Server酱 HTTP {status}"
+        elif code is not None:
+            message = f"Server酱业务错误 (code={code})"
+        else:
+            message = "Server酱响应格式无效"
+        super().__init__(message)
+
+
 class Notifer:
     def __init__(self, session: aiohttp.ClientSession, notification_config: dict):
         self.session = session
         self.notification_config = notification_config
 
     async def ms_send(self, desp: str = '', title: str = "weibo") -> None:
-        # server酱推送
         sendkey = self.notification_config['sendkey']
-        # 判断 sendkey 格式并构造 URL
         if sendkey.startswith('sctp'):
-            # 新版 sendkey 格式: sctp{num}t...
             match = re.match(r'sctp(\d+)t', sendkey)
             if not match:
-                raise ValueError('Invalid sendkey format')
-            num = match.group(1)
-            url = f"https://{num}.push.ft07.com/send/{sendkey}.send"
+                raise ValueError("Invalid Server酱 SendKey format")
+            url = f"https://{match.group(1)}.push.ft07.com/send/{sendkey}.send"
         else:
-            # 旧版 sendkey 格式
             url = f"https://sctapi.ftqq.com/{sendkey}.send"
 
-        response = await self.session.post(
+        async with self.session.post(
             url=url,
             json={"title": title, "desp": desp},
-            headers={"Content-Type": "application/json;charset=utf-8"})
-        response.raise_for_status()
+            headers={"Content-Type": "application/json;charset=utf-8"},
+            timeout=aiohttp.ClientTimeout(total=10),
+            allow_redirects=False,
+        ) as response:
+            if not 200 <= response.status < 300:
+                raise ServerChanResponseError(status=response.status)
+            try:
+                payload = await response.json()
+            except (aiohttp.ContentTypeError, ValueError):
+                raise ServerChanResponseError() from None
+
+            code = payload.get("code") if isinstance(payload, dict) else None
+            if type(code) is not int:
+                raise ServerChanResponseError()
+            if code != 0:
+                raise ServerChanResponseError(code=code)
+
         logger.info("Server酱推送成功！")
 
     async def telegram_send(self, message: str) -> None:
@@ -73,7 +98,9 @@ class Notifer:
             if isinstance(result, BaseException):
                 # Provider exception strings may contain credentials in request URLs.
                 error = type(result).__name__
-                if isinstance(result, aiohttp.ClientResponseError):
+                if type(result) is ServerChanResponseError:
+                    error = str(result)
+                elif isinstance(result, aiohttp.ClientResponseError):
                     error = f"{error} (HTTP {result.status})"
                 logger.error(f"{channel} push failed: {error}")
                 results[channel] = (False, error)
