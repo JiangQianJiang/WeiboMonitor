@@ -1,15 +1,39 @@
-import re
-from typing import Dict, Optional, Tuple
-import aiohttp
-from loguru import logger
-import telegram
 import asyncio
+import re
+from collections.abc import Callable
+from typing import Dict, Optional, Tuple
+
+import aiohttp
+import telegram
+from loguru import logger
+from telegram.helpers import escape_markdown
 
 
 def escape_markdown_v2(text: str) -> str:
     """转义 Telegram MarkdownV2 特殊字符"""
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(special_chars)}])', r'\\\1', text)
+    return escape_markdown(text, version=2)
+
+
+def format_telegram_message(config: dict, info: dict, url: str) -> str:
+    # Keep configurations copied from the old example working.
+    template = config["telegram_template"]
+    template = template.replace("{region_name} | {source}", r"{region_name} \| {source}")
+    return template.format(
+        screen_name=escape_markdown_v2(str(info.get("screen_name") or "")),
+        text=escape_markdown_v2(str(info.get("text") or "")),
+        region_name=escape_markdown_v2(str(info.get("region_name") or "")),
+        source=escape_markdown_v2(str(info.get("source") or "")),
+        url=escape_markdown_v2(url),
+    )
+
+
+def format_serverchan_message(info: dict, url: str) -> str:
+    return (
+        f"【{info['screen_name']}】发表微博：\n\n"
+        f"{info['text']}\n\n"
+        f"{info['region_name']} | {info['source']}\n\n"
+        f"{url}\n\n"
+    )
 
 
 class ServerChanResponseError(RuntimeError):
@@ -66,26 +90,40 @@ class Notifer:
 
     async def telegram_send(self, message: str) -> None:
         bot = telegram.Bot(self.notification_config['tgbottoken'])
-        await bot.send_message(text=message, chat_id=self.notification_config['chatid'], parse_mode="MarkdownV2",
-                               disable_web_page_preview=True)
+        await bot.send_message(
+            text=message,
+            chat_id=self.notification_config['chatid'],
+            parse_mode="MarkdownV2",
+            disable_web_page_preview=True,
+        )
         logger.info("telegram推送成功！")
 
-    async def send_message(self, message: str, telegram_message: str, title: str) -> Dict[str, Tuple[bool, Optional[str]]]:
+    async def send_message(
+        self,
+        message: str | Callable[[], str],
+        telegram_message: str | Callable[[], str],
+        title: str,
+    ) -> Dict[str, Tuple[bool, Optional[str]]]:
         """
         Push message to telegram and/or serverchan based on config switches.
         Returns {channel: (success, safe_error_summary)} for logging and persistence.
 
-        message: Server酱 message
-        telegram_message: Telegram message
-        title: Server酱 title
+        Message builders run inside their respective channel tasks so rendering
+        failures can be reported alongside the other channel's result.
         """
-        logger.info(message)
+        async def send_telegram() -> None:
+            text = telegram_message() if callable(telegram_message) else telegram_message
+            await self.telegram_send(text)
+
+        async def send_serverchan() -> None:
+            text = message() if callable(message) else message
+            await self.ms_send(text, title)
 
         channels: Dict[str, "coroutine"] = {}
         if self.notification_config.get('enable_telegram', True):
-            channels['telegram'] = self.telegram_send(telegram_message)
+            channels['telegram'] = send_telegram()
         if self.notification_config.get('enable_serverchan', True):
-            channels['serverchan'] = self.ms_send(message, title)
+            channels['serverchan'] = send_serverchan()
 
         if not channels:
             logger.warning("All notification channels are disabled, skipping push")

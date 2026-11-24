@@ -829,7 +829,7 @@ class TestAppCheckSingle:
 
         push_call_ids = []
         app.notifer = MagicMock()
-        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_call_ids.append(msg) or {
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_call_ids.append(tg()) or {
             'telegram': (True, None),
         })
 
@@ -871,7 +871,7 @@ class TestAppCheckSingle:
 
         push_call_texts = []
         app.notifer = MagicMock()
-        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_call_texts.append(msg) or {
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_call_texts.append(tg()) or {
             'telegram': (True, None),
         })
 
@@ -1027,7 +1027,7 @@ class TestAppCheckSingle:
         ])
 
         push_texts = []
-        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(msg) or {
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(tg()) or {
             'telegram': (True, None),
         })
 
@@ -1083,7 +1083,7 @@ class TestAppCheckSingle:
 
         # Second poll: same list, should retry from new2
         push_retry_texts = []
-        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_retry_texts.append(msg) or {
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_retry_texts.append(tg()) or {
             'telegram': (True, None),
         })
 
@@ -1166,7 +1166,7 @@ class TestAppCheckSingle:
 
         push_texts = []
         app.notifer = MagicMock()
-        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(msg) or {
+        app.notifer.send_message = AsyncMock(side_effect=lambda msg, tg, title: push_texts.append(tg()) or {
             'telegram': (True, None),
         })
 

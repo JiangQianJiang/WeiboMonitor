@@ -1,4 +1,5 @@
 import asyncio
+from functools import partial
 
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -6,7 +7,7 @@ from loguru import logger
 
 from core.config import load_config, LOG_DIR
 from monitor.weibo import WeiboMonitor
-from notifer.notifer import Notifer, escape_markdown_v2
+from notifer.notifer import Notifer, format_serverchan_message, format_telegram_message
 from state.store import get_repository
 
 
@@ -92,24 +93,13 @@ class App:
                 new_weibos = [item for item in reversed(info_list) if str(item['id']) in before_set]
 
             for info in new_weibos:
-                message = (
-                    f"【{info['screen_name']}】发表微博：\n\n"
-                    f"{info['text']}\n\n"
-                    f"{info['region_name']} | {info['source']}\n\n"
-                    f"https://weibo.com/{weiboid}/{info['id']}\n\n"
-                )
-                # Escape user data fields BEFORE template substitution to preserve template markup
-                telegram_message = self.config["notification"]["telegram_template"].format(
-                    screen_name=escape_markdown_v2(info["screen_name"]),
-                    text=escape_markdown_v2(info["text"]),
-                    region_name=escape_markdown_v2(info["region_name"]),
-                    source=escape_markdown_v2(info["source"]),
-                    url=escape_markdown_v2(f"https://weibo.com/{weiboid}/{info['id']}"),
-                )
+                url = f"https://weibo.com/{weiboid}/{info['id']}"
                 logger.info(f"{info['screen_name']}检测到新微博，准备推送")
 
                 push_results = await self.notifer.send_message(
-                    message, telegram_message, f"{info['screen_name']}发微博啦"
+                    partial(format_serverchan_message, info, url),
+                    partial(format_telegram_message, self.config["notification"], info, url),
+                    f"{info['screen_name']}发微博啦",
                 )
 
                 info["weiboid"] = weiboid
