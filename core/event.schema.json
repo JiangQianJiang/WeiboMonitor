@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WeiboMonitor Event v1",
+  "type": "object",
+  "required": ["schema_version", "event_id", "type", "account_id", "actor_id", "subject", "occurred_at", "observed_at", "source", "data"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "event_id": { "type": "string", "format": "uuid" },
+    "type": {
+      "enum": [
+        "post.created", "post.reposted", "post.updated", "post.deleted",
+        "following.added", "following.removed", "profile.updated", "post.liked",
+        "comment.created", "post.pinned", "keyword.matched"
+      ]
+    },
+    "account_id": { "$ref": "#/$defs/id" },
+    "actor_id": { "$ref": "#/$defs/nullableId" },
+    "subject": {
+      "type": "object",
+      "required": ["type", "id"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "enum": ["post", "user", "comment"] },
+        "id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "occurred_at": { "type": ["string", "null"], "format": "date-time" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "source": { "type": "string", "pattern": "^/" },
+    "data": {
+      "type": "object",
+      "required": ["url"],
+      "properties": {
+        "url": { "type": "string", "format": "uri" }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1 },
+    "nullableId": { "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+    "post": {
+      "type": "object",
+      "required": ["id", "text"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "text": { "type": "string" }
+      }
+    },
+    "profileFields": { "enum": ["screen_name", "avatar", "description"] },
+    "profile": {
+      "type": "object",
+      "required": ["screen_name", "avatar", "description"],
+      "properties": {
+        "screen_name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "postContent": {
+      "type": "object",
+      "required": ["text", "pictures", "media_id"],
+      "properties": {
+        "text": { "type": "string" },
+        "pictures": { "type": "array", "items": { "type": "string" } },
+        "media_id": { "type": "string" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "enum": ["post.created", "post.reposted", "post.updated", "post.deleted", "post.liked", "keyword.matched"] } } },
+      "then": { "properties": { "subject": { "properties": { "type": { "const": "post" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["following.added", "following.removed", "profile.updated", "post.pinned"] } } },
+      "then": { "properties": { "subject": { "properties": { "type": { "const": "user" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["post.created", "post.reposted", "post.liked", "keyword.matched"] } } },
+      "then": { "properties": { "data": { "required": ["post"], "properties": { "post": { "$ref": "#/$defs/post" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "post.reposted" } } },
+      "then": { "properties": { "data": { "required": ["original_post_id"], "properties": { "original_post_id": { "$ref": "#/$defs/nullableId" } } } } }
+    },
+    {
+      "if": { "properties": { "type": { "const": "post.updated" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["before", "after"],
+            "properties": { "before": { "$ref": "#/$defs/postContent" }, "after": { "$ref": "#/$defs/postContent" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "post.deleted" } } },
+      "then": {
+        "properties": {
+          "actor_id": { "type": "null" },
+          "data": { "required": ["confirmations"], "properties": { "confirmations": { "type": "integer", "minimum": 2 } } }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["following.added", "following.removed"] } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["user"],
+            "properties": {
+              "user": {
+                "type": "object",
+                "required": ["id", "screen_name"],
+                "properties": { "id": { "$ref": "#/$defs/id" }, "screen_name": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "profile.updated" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["before", "after", "fields"],
+            "properties": {
+              "before": { "$ref": "#/$defs/profile" },
+              "after": { "$ref": "#/$defs/profile" },
+              "fields": { "type": "array", "items": { "$ref": "#/$defs/profileFields" }, "minItems": 1, "uniqueItems": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "comment.created" } } },
+      "then": {
+        "properties": {
+          "subject": { "properties": { "type": { "const": "comment" } } },
+          "data": {
+            "required": ["post_id", "comment"],
+            "properties": {
+              "post_id": { "$ref": "#/$defs/id" },
+              "comment": {
+                "type": "object",
+                "required": ["id", "author_id", "time", "text"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/id" },
+                  "author_id": { "$ref": "#/$defs/id" },
+                  "time": { "type": "string" },
+                  "text": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "post.pinned" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["previous_post_id", "post_id"],
+            "properties": { "previous_post_id": { "$ref": "#/$defs/nullableId" }, "post_id": { "$ref": "#/$defs/nullableId" } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "keyword.matched" } } },
+      "then": {
+        "properties": {
+          "data": {
+            "required": ["keywords"],
+            "properties": { "keywords": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1 } }
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 -- WeiboMonitor SQLite Database Schema
--- Three-table design for state persistence, weibo history, and push logging
+-- Existing account, history and push tables remain available to older clients.
 
 -- Account State Table (replaces state.yaml)
 CREATE TABLE IF NOT EXISTS account_state (
@@ -45,3 +45,34 @@ CREATE INDEX IF NOT EXISTS idx_weibo_history_fetched_at ON weibo_history(fetched
 CREATE INDEX IF NOT EXISTS idx_push_log_weiboid ON push_log(weiboid);
 CREATE INDEX IF NOT EXISTS idx_push_log_pushed_at ON push_log(pushed_at);
 CREATE INDEX IF NOT EXISTS idx_push_log_status ON push_log(status);
+
+CREATE TABLE IF NOT EXISTS event_snapshots (
+    account_id TEXT NOT NULL,
+    stream TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    snapshot TEXT NOT NULL,
+    PRIMARY KEY (account_id, stream)
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    event_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    type TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    delivered_at TEXT,
+    delivery_attempts INTEGER NOT NULL DEFAULT 0,
+    failed_at TEXT,
+    delivery_token TEXT,
+    lease_until TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_pending_events ON events(account_id) WHERE delivered_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS event_push_log (
+    event_id TEXT NOT NULL REFERENCES events(event_id),
+    channel TEXT NOT NULL,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    pushed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

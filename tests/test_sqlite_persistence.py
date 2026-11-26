@@ -882,7 +882,7 @@ class TestAppCheckSingle:
             }
         }
 
-        with patch('core.app.logger') as mock_logger:
+        with patch('monitor.events.logger') as mock_logger:
             await app._check_single({'weiboid': 'gap_user'})
 
         # Should push both in chronological order: newer → newest

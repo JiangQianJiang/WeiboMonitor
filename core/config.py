@@ -2,6 +2,7 @@ from pathlib import Path
 import yaml
 from loguru import logger
 
+from monitor.events import EventOptions
 from notifer.notifer import format_telegram_message
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -45,6 +46,18 @@ def load_config() -> dict:
         notification = config.get("notification")
         if not isinstance(notification, dict):
             raise ValueError("users.yaml 的 notification 必须是配置对象")
+        accounts = config.get("accounts", [])
+        if not isinstance(accounts, list):
+            raise ValueError("users.yaml 的 accounts 必须是账号列表")
+        seen_ids = set()
+        for account in accounts:
+            if not isinstance(account, dict) or not str(account.get("weiboid") or "").strip():
+                raise ValueError("每个 accounts 条目都需要 weiboid")
+            uid = str(account["weiboid"])
+            if uid in seen_ids:
+                raise ValueError("users.yaml 的 accounts 包含重复的 weiboid")
+            seen_ids.add(uid)
+            EventOptions.from_account(account)
         _validate_notification(notification)
         logger.info("配置文件加载成功")
         return config
