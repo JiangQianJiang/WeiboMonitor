@@ -7,6 +7,15 @@ import yaml
 from core import config
 from core.app import App
 from notifer.notifer import Notifer, format_telegram_message
+from state.repository import StateRepository
+
+
+@pytest.mark.parametrize("text", ["", "  \n"])
+def test_empty_telegram_post_uses_its_url(text):
+    url = "https://weibo.com/123/456"
+    assert format_telegram_message({"telegram_template": "{text}"}, {"text": text}, url) == (
+        r"https://weibo\.com/123/456"
+    )
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -61,7 +70,7 @@ def test_config_only_warns_about_enabled_channels(tmp_path, monkeypatch):
     ],
 )
 async def test_app_delivers_to_serverchan_without_a_renderable_telegram_template(
-    notification, expected_results,
+    notification, expected_results, tmp_path,
 ):
     app = App()
     app.config = {"notification": notification}
@@ -72,12 +81,10 @@ async def test_app_delivers_to_serverchan_without_a_renderable_telegram_template
         "source": "Web",
         "region_name": "Shanghai",
     }]))
-    app.repository = SimpleNamespace(
-        get_latest_id=Mock(return_value="1"),
-        set_latest_id=AsyncMock(),
-        save_weibo_history=AsyncMock(),
-        log_push=AsyncMock(),
-    )
+    app.repository = StateRepository()
+    app.repository._db_path = tmp_path / "state.db"
+    await app.repository.initialize()
+    await app.repository.set_latest_id("123", "1")
     app.notifer = Notifer(session=None, notification_config=notification)
     app.notifer.telegram_send = AsyncMock()
     app.notifer.ms_send = AsyncMock()
@@ -87,10 +94,10 @@ async def test_app_delivers_to_serverchan_without_a_renderable_telegram_template
     app.notifer.telegram_send.assert_not_awaited()
     app.notifer.ms_send.assert_awaited_once()
     assert "Newest post" in app.notifer.ms_send.await_args.args[0]
-    app.repository.set_latest_id.assert_awaited_once_with("123", "2", "Weibo User")
-    assert [
-        call.args[2:4] for call in app.repository.log_push.await_args_list
-    ] == expected_results
+    assert app.repository.get_latest_id("123") == "2"
+    async with app.repository._connect() as database:
+        async with database.execute("SELECT channel, status FROM event_push_log ORDER BY rowid") as cursor:
+            assert await cursor.fetchall() == expected_results
 
 
 async def test_disabled_serverchan_does_not_render():

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import UTC, datetime
 from functools import partial
 
 import aiohttp
@@ -6,8 +7,10 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from loguru import logger
 
 from core.config import load_config, LOG_DIR
+from core.events import EventType
+from monitor.events import EventMonitor, EventOptions
 from monitor.weibo import WeiboMonitor
-from notifer.notifer import Notifer, format_serverchan_message, format_telegram_message
+from notifer.notifer import Notifer, event_notification, format_serverchan_message, format_telegram_message
 from state.store import get_repository
 
 
@@ -46,92 +49,82 @@ class App:
         logger.info("App 已停止")
 
     async def _check_updates(self):
-        logger.debug("开始检查微博更新")
-        tasks = [
-            self._check_single(account)
-            for account in self.config["accounts"]
-        ]
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*(self._check_single(account) for account in self.config.get("accounts", [])))
+
+    def _event_monitor(self, account):
+        return EventMonitor(
+            str(account["weiboid"]), EventOptions.from_account(account), self.monitor, self.repository,
+            EventMonitor.viewer_key(self.config.get("cookie")),
+        )
 
     async def _check_single(self, account: dict):
-        weiboid = account["weiboid"]
+        monitor = self._event_monitor(account)
+        await self._scan_account(monitor, timeline=True, activity=True)
+        await self._deliver_account(monitor.uid)
+
+    async def _scan_account(self, monitor, *, timeline, activity):
         try:
-            info_list = await self.monitor.get_weibo_list(weiboid)
-            if not info_list:
-                logger.warning(f"{weiboid}未获取到微博内容")
+            await monitor.poll(timeline=timeline, activity=activity)
+        except Exception as error:
+            logger.error(f"检查微博更新失败 {monitor.uid} ({type(error).__name__})")
+
+    async def _deliver_account(self, uid):
+        try:
+            await self._deliver_pending(uid)
+        except Exception as error:
+            logger.error(f"处理微博通知失败 {uid} ({type(error).__name__})")
+
+    async def _deliver_pending(self, uid):
+        notification = self.config["notification"]
+        if not notification.get("enable_telegram", True) and not notification.get("enable_serverchan", True):
+            return
+        for _ in range(100):
+            delivery = await self.repository.claim_pending_event(uid)
+            if delivery is None:
                 return
-
-            old_id = self.repository.get_latest_id(weiboid)
-
-            # Cold start: silently record the newest weibo ID, don't push
-            if not old_id:
-                latest = info_list[0]
-                await self.repository.set_latest_id(weiboid, latest["id"], latest["screen_name"])
-                logger.info(f"{latest['screen_name']}首次记录，不推送，latest_id={latest['id']}")
-                return
-
-            # Boundary-prefix: use raw page ID sequence when available so that a
-            # malformed (skipped) entry does not erase the stored boundary.
-            raw_ids = getattr(info_list, 'raw_ids', None)
-            if raw_ids is None:
-                # Plain-list fallback for test doubles that return a bare list
-                raw_ids = [str(item['id']) for item in info_list]
-
-            idx = next((i for i, rid in enumerate(raw_ids) if str(rid) == str(old_id)), None)
-
-            if idx is None:
-                # old_id not on first page — push all and warn
-                logger.warning(f"{weiboid}: old_id {old_id} not found on first page, pushing all {len(info_list)} items")
-                new_weibos = list(reversed(info_list))
-            elif idx == 0:
-                # First item is old_id, no new weibos
-                logger.debug(f"{info_list[0]['screen_name']}无新微博更新")
-                return
-            else:
-                # Only push items whose raw position is before the boundary
-                before_set = {str(rid) for rid in raw_ids[:idx]}
-                new_weibos = [item for item in reversed(info_list) if str(item['id']) in before_set]
-
-            for info in new_weibos:
-                url = f"https://weibo.com/{weiboid}/{info['id']}"
-                logger.info(f"{info['screen_name']}检测到新微博，准备推送")
-
-                push_results = await self.notifer.send_message(
-                    partial(format_serverchan_message, info, url),
-                    partial(format_telegram_message, self.config["notification"], info, url),
-                    f"{info['screen_name']}发微博啦",
-                )
-
-                info["weiboid"] = weiboid
-
-                # Check if at least one channel succeeded
-                any_success = any(success for success, _ in push_results.values()) if push_results else False
-
-                if any_success:
-                    # At least one channel succeeded - ensure parent record first
-                    await self.repository.set_latest_id(weiboid, info["id"], info["screen_name"])
-                    await self.repository.save_weibo_history(info)
-                    # Log all push results after parent exists
-                    for channel, (success, error) in push_results.items():
-                        status = "success" if success else "failed"
-                        await self.repository.log_push(weiboid, info["id"], channel, status, error)
-                    logger.info(f"{info['screen_name']}推送成功，状态已更新")
+            event, token = delivery
+            try:
+                if event.type == EventType.POST_CREATED:
+                    post, url = event.data["post"], event.data["url"]
+                    messages = (
+                        partial(format_serverchan_message, post, url),
+                        partial(format_telegram_message, notification, post, url),
+                        f"{post['screen_name']}发微博啦",
+                    )
                 else:
-                    # All channels failed — ensure parent row exists before logging
-                    # Use current latest_id (may have been advanced by prior items in this batch)
-                    current_id = self.repository.get_latest_id(weiboid)
-                    await self.repository.set_latest_id(weiboid, current_id, info.get("screen_name"))
-                    for channel, (success, error) in push_results.items():
-                        await self.repository.log_push(weiboid, info["id"], channel, "failed", error)
-                    logger.error(f"{info['screen_name']}推送失败，中断后续推送")
-                    break
+                    messages = event_notification(event)
+                results = await self.notifer.send_message(*messages)
+            except Exception as error:
+                results = {"delivery": (False, type(error).__name__)}
+            if not await self.repository.finish_event_delivery(event, token, results):
+                logger.warning(f"{uid} 的事件 {event.type} 尚未推送成功，将在下次检查重试")
+                return
+            if not any(sent for sent, _ in results.values()):
+                logger.error(f"{uid} 的事件 {event.event_id} 已达到推送重试上限")
 
-        except Exception:
-            logger.exception(f"检查微博更新失败: {weiboid}")
+    def _schedule_jobs(self):
+        start = datetime.now(UTC)
+        for account in self.config.get("accounts", []):
+            monitor = self._event_monitor(account)
+            for enabled, interval, name in (
+                (monitor.watches_timeline, 8, "timeline"),
+                (monitor.watches_activity, 60, "activity"),
+            ):
+                if enabled:
+                    self.scheduler.add_job(
+                        self._scan_account, "interval", seconds=interval, next_run_time=start,
+                        id=f"{name}:{monitor.uid}", args=[monitor],
+                        kwargs={"timeline": name == "timeline", "activity": name == "activity"},
+                        max_instances=1,
+                    )
+            self.scheduler.add_job(
+                self._deliver_account, "interval", seconds=8, next_run_time=start,
+                id=f"delivery:{monitor.uid}", args=[monitor.uid], max_instances=1,
+            )
 
     async def _run(self):
         await self.start()
-        self.scheduler.add_job(self._check_updates, "interval", seconds=8)
+        self._schedule_jobs()
         self.scheduler.start()
         logger.info("调度器启动，检查间隔8秒")
         try:

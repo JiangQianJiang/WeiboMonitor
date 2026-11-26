@@ -8,6 +8,23 @@ cookie: "<YOUR_WEIBO_COOKIE>"
 accounts:
   - weiboid: "1234567890"  # 微博用户ID，可在微博主页URL中找到
   - weiboid: "9876543210"  # 另一个微博用户ID
+    # 省略 events 时监控发博和转发。取消注释以按账号选择事件。
+    # events:
+    #   - post.created
+    #   - post.reposted
+    #   - post.updated
+    #   - post.deleted
+    #   - following.added
+    #   - following.removed
+    #   - profile.updated
+    #   - post.liked
+    #   - comment.created
+    #   - post.pinned
+    #   - keyword.matched
+    # keywords: ["发布", "版本更新"]
+    # comment_post_ids: ["5281762063682574"]  # 评论所在微博的数字 ID
+    # following_page_limit: 20
+    # activity_page_limit: 2
 
 # 通知配置
 notification:
